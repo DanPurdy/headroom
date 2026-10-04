@@ -20,13 +20,23 @@ struct UsageView: View {
 
                 Divider()
 
-                DisclosureGroup("Claude Code setup", isExpanded: $showSetup) {
+                // Stays open while any Claude Code folder still needs connecting.
+                DisclosureGroup(isExpanded: Binding(get: { showSetup || model.needsSetup }, set: { showSetup = $0 })) {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(model.setupRows) { row in
                             SetupRowView(row: row, model: model)
                         }
                     }
                     .padding(.top, 6)
+                } label: {
+                    let pending = model.setupRows.filter { !$0.isConnected }.count
+                    HStack {
+                        Text("Claude Code setup")
+                        Spacer()
+                        Text(pending == 0 ? "All connected" : "\(pending) to connect")
+                            .font(.caption)
+                            .foregroundStyle(pending == 0 ? Color.secondary : Color.orange)
+                    }
                 }
 
                 if let error = model.lastError {
@@ -162,10 +172,16 @@ struct SetupRowView: View {
                 case .installed(let current):
                     if current != label {
                         Button("Rename") { model.install(configDir: row.configDir, label: label) }
+                    } else {
+                        Label("Installed", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
                     }
+                    Spacer()
                     Button("Remove") { model.uninstall(configDir: row.configDir) }
                 case .stale:
                     Button("Repair") { model.install(configDir: row.configDir, label: label) }
+                        .help("Installed, but pointing at an older copy of Headroom.")
+                    Spacer()
                     Button("Remove") { model.uninstall(configDir: row.configDir) }
                 }
             }

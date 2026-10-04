@@ -21,6 +21,11 @@ struct SetupRow: Identifiable {
     var state: Installer.State
 
     var id: String { configDir }
+
+    var isConnected: Bool {
+        if case .installed = state { return true }
+        return false
+    }
 }
 
 /// Everything the menu shows. Nothing here polls: it reloads when a snapshot file changes,
@@ -61,10 +66,16 @@ final class UsageModel {
     /// The text shown in the menu bar: each account's 5-hour usage, e.g. "M 23%  P 5%".
     var menuBarTitle: String? {
         let parts = accounts.compactMap { row -> String? in
-            guard let window = row.snapshot?.fiveHour else { return nil }
-            return "\(row.label.prefix(1)) \(Formatting.percent(window.usedPercentage(at: now)))"
+            guard let snapshot = row.snapshot else { return nil }
+            // A window missing from a snapshot has reset.
+            let used = snapshot.fiveHour?.usedPercentage(at: now) ?? 0
+            return "\(row.label.prefix(1)) \(Formatting.percent(used))"
         }
         return parts.isEmpty ? nil : parts.joined(separator: "  ")
+    }
+
+    var needsSetup: Bool {
+        setupRows.contains { !$0.isConnected }
     }
 
     func install(configDir: String, label: String) {
