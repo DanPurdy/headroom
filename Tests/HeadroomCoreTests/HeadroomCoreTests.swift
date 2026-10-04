@@ -185,6 +185,13 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         #expect(ConfigDir.current(environment: [:]) == NSHomeDirectory() + "/.claude")
     }
 
+    @Test func recognisesClaudeConfigFolders() throws {
+        let claude = try tempConfigDir(settings: nil)
+        try FileManager.default.createDirectory(atPath: claude + "/projects", withIntermediateDirectories: true)
+        #expect(ConfigDir.looksLikeClaudeConfig(claude))
+        #expect(!ConfigDir.looksLikeClaudeConfig(try tempConfigDir(settings: nil)))
+    }
+
     @Test func detectsClaudeDirectoriesOnly() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("home-\(UUID().uuidString)")
         for dir in [".claude", ".claude-personal", ".config"] {

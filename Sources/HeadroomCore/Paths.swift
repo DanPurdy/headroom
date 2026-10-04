@@ -62,6 +62,12 @@ public enum ConfigDir {
         return trimmed.isEmpty ? "Main" : trimmed.prefix(1).uppercased() + trimmed.dropFirst()
     }
 
+    /// Whether `path` looks like a Claude Code config dir (for folders the user picks by hand).
+    public static func looksLikeClaudeConfig(_ path: String) -> Bool {
+        let markers = ["projects", "history.jsonl", "settings.json", ".claude.json"]
+        return markers.contains { FileManager.default.fileExists(atPath: normalize(path) + "/" + $0) }
+    }
+
     /// `~/.claude` plus any `~/.claude-*` directories, plus `CLAUDE_CONFIG_DIR` if set.
     public static func detect(home: String = NSHomeDirectory(),
                               environment: [String: String] = ProcessInfo.processInfo.environment) -> [String] {

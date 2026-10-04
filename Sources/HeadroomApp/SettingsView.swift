@@ -11,13 +11,17 @@ struct SettingsPage: View {
                 .font(.subheadline.weight(.semibold))
 
             if model.setupRows.isEmpty {
-                Text("No Claude Code folders found in your home folder.")
+                Text("No Claude Code folders found in your home folder. Headroom needs Claude Code on this Mac: install it and log in, or add your folder if it lives somewhere else.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             ForEach(model.setupRows) { row in
                 SetupRowView(row: row, model: model)
             }
+            Button("Add folder…", action: chooseFolder)
+                .controlSize(.small)
+                .help("Add a Claude Code config folder that isn't ~/.claude or ~/.claude-*")
             if let error = model.lastError {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
@@ -43,6 +47,24 @@ struct SettingsPage: View {
                 Link("GitHub", destination: URL(string: "https://github.com/DanPurdy/headroom")!)
             }
             .font(.caption)
+        }
+    }
+}
+
+extension SettingsPage {
+    /// Hidden folders shown, since Claude Code folders usually start with a dot.
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true
+        panel.directoryURL = URL(fileURLWithPath: NSHomeDirectory())
+        panel.message = "Choose a Claude Code config folder (the one CLAUDE_CONFIG_DIR points at)."
+        panel.prompt = "Add"
+        NSApplication.shared.activate()
+        if panel.runModal() == .OK, let url = panel.url {
+            model.addConfigDir(url.path)
         }
     }
 }
@@ -110,6 +132,10 @@ struct SetupRowView: View {
     @ViewBuilder private var actions: some View {
         switch row.state {
         case .notInstalled:
+            if row.isUserAdded {
+                Button("Forget") { model.forgetConfigDir(row.configDir) }
+                    .help("Remove this folder from Headroom's list")
+            }
             Button("Install") { model.install(configDir: row.configDir, label: label) }
         case .installed(let current):
             if current != label {

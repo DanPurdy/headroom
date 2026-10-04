@@ -47,7 +47,7 @@ struct UsageView: View {
             VStack(alignment: .leading, spacing: 12) {
                 if model.accounts.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("No Claude Code accounts connected yet. Connect them in Settings, then send a message in Claude Code.")
+                        Text("No Claude Code accounts connected yet. Connect them in Settings (or add your Claude Code folder there), then send a message in Claude Code.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                         Button("Open Settings") { showingSettings = true }

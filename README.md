@@ -3,7 +3,7 @@
 # Headroom
 
 A macOS menu bar app showing how much of your Claude plan's limits you've used, across
-several Claude Code accounts at once.
+several Claude Code accounts at once. It needs Claude Code installed and logged in on the Mac.
 
 - **5-hour and weekly limits** per account, with reset countdowns. The menu bar shows one
   column per account: its label beside two stacked bars with percentages, 5-hour on top
@@ -14,7 +14,7 @@ several Claude Code accounts at once.
 
 ## How it works, and why it's safe
 
-Headroom never sees your Claude login and never calls any API.
+By default Headroom never sees your Claude login and never calls any API.
 
 Claude Code already passes your plan usage (`rate_limits`) to its
 [status line command](https://code.claude.com/docs/en/statusline) after each reply. Headroom
@@ -23,14 +23,31 @@ wraps that command: it saves the numbers to small JSON files in
 input, so what you see in the terminal doesn't change. The status line runs locally and
 uses no tokens.
 
+Those figures are as of that session's last reply, which for an idle session can be days
+old, so Headroom dates each reading by the last reply in the session's transcript and never
+lets an older reading replace a newer one.
+
 The menu bar app watches those files with kqueue, so it does nothing until one changes.
 The other things that wake it are a Claude Code process exiting, which drops that session
-from the list, and a limit window resetting or midnight passing. The only timer that ticks
-is the countdown display, once a minute, while the menu panel is open.
+from the list, and precomputed moments: a limit window resetting, a reading going stale,
+midnight, or a Live check falling due. The only timer that ticks is the countdown display,
+once a minute, while the menu panel is open.
 
-**Trade-off:** numbers update only while Claude Code runs on that account. Usage from
-claude.ai or the desktop app counts towards the same limits, but shows up only after your
-next Claude Code reply. Each account card shows when it was last updated.
+**Trade-off:** without Live, numbers update only when Claude Code replies on that account.
+Usage from claude.ai, the desktop app or other devices counts towards the same limits but
+shows up only after the next Claude Code reply. Readings older than 30 minutes are dimmed
+with an orange "as of" age.
+
+### Live usage (optional, per account)
+
+Turn on **Live usage** for an account in Settings to also check its usage hourly and when
+you press ⟳ on its card. This catches use from anywhere: claude.ai, the desktop app,
+mobile and other machines. It reads the login Claude Code saved in your Keychain (macOS asks
+first) and calls `https://api.anthropic.com/api/oauth/usage`, the undocumented endpoint
+behind Claude Code's `/usage`. Headroom only reads that login: it never refreshes or
+replaces it, so it can't log Claude Code out. If the saved login has expired, Live says so
+until Claude Code next runs on that account. Because releases aren't signed with a
+Developer ID yet, macOS will likely ask for Keychain access again after each update.
 
 Each Claude Code config dir (`~/.claude`, or whatever `CLAUDE_CONFIG_DIR` points at) is
 treated as one account.
@@ -46,8 +63,9 @@ Until releases are signed with a Developer ID, macOS blocks a browser download t
 time you open it. Either approve it under System Settings → Privacy & Security → Open
 Anyway, or run `xattr -dr com.apple.quarantine /Applications/Headroom.app`.
 
-Then open the menu, expand **Claude Code setup**, give each config dir a label and press
-**Install**. That edits the `statusLine` in that dir's `settings.json`; your previous
+Then open the menu, go to **Settings** (the gear), give each Claude Code folder a label and
+press **Install**. Headroom lists `~/.claude` and any `~/.claude-*` folder; if yours lives
+elsewhere, use **Add folder…**. That edits the `statusLine` in that dir's `settings.json`; your previous
 status line keeps working, and a backup is kept in `~/Library/Application Support/Headroom/installs`.
 **Remove** puts the original back.
 

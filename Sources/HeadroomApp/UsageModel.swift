@@ -22,6 +22,8 @@ struct SetupRow: Identifiable {
     var label: String
     var state: Installer.State
     var liveEnabled: Bool
+    /// Added with "Add folder…" rather than found by the home folder scan.
+    var isUserAdded: Bool
 
     var id: String { configDir }
 
@@ -70,6 +72,9 @@ final class UsageModel {
     /// A session that hasn't replied for this long is shown as idle.
     static let idleAfter: TimeInterval = 15 * 60
     private static let liveDefaultsKey = "liveConfigDirs"
+    private static let addedDefaultsKey = "addedConfigDirs"
+
+    @ObservationIgnored private var addedDirs: [String] = UserDefaults.standard.stringArray(forKey: UsageModel.addedDefaultsKey) ?? []
 
     init() {
         try? store.paths.ensureDirectories()
@@ -110,6 +115,30 @@ final class UsageModel {
     func install(configDir: String, label: String) {
         let trimmed = label.trimmingCharacters(in: .whitespaces)
         perform { try installer.install(configDir: configDir, label: trimmed.isEmpty ? ConfigDir.defaultLabel(for: configDir) : trimmed, binary: cli) }
+    }
+
+    /// Adds a config dir the home folder scan can't find. Returns false if it doesn't look like one.
+    @discardableResult
+    func addConfigDir(_ path: String) -> Bool {
+        let dir = ConfigDir.normalize(path)
+        guard ConfigDir.looksLikeClaudeConfig(dir) else {
+            lastError = "\(dir.replacingOccurrences(of: NSHomeDirectory(), with: "~")) doesn't look like a Claude Code folder (no projects, settings.json or history.jsonl)."
+            return false
+        }
+        if !addedDirs.contains(dir) {
+            addedDirs.append(dir)
+            UserDefaults.standard.set(addedDirs, forKey: Self.addedDefaultsKey)
+        }
+        lastError = nil
+        reload()
+        return true
+    }
+
+    func forgetConfigDir(_ path: String) {
+        addedDirs.removeAll { $0 == path }
+        UserDefaults.standard.set(addedDirs, forKey: Self.addedDefaultsKey)
+        if live[path] != nil { setLive(configDir: path, enabled: false) }
+        reload()
     }
 
     func uninstall(configDir: String) {
@@ -238,11 +267,13 @@ final class UsageModel {
         }
         accounts = rows.values.sorted { $0.label.localizedStandardCompare($1.label) == .orderedAscending }
 
-        var dirs = ConfigDir.detect()
-        for record in records where !dirs.contains(record.configDir) { dirs.append(record.configDir) }
+        let scanned = ConfigDir.detect()
+        var dirs = scanned
+        for dir in records.map(\.configDir) + addedDirs + Array(live.keys) where !dirs.contains(dir) { dirs.append(dir) }
         setupRows = dirs.map { dir in
             SetupRow(configDir: dir, label: installer.record(for: dir)?.label ?? ConfigDir.defaultLabel(for: dir),
-                     state: installer.state(configDir: dir, binary: cli), liveEnabled: live[dir] != nil)
+                     state: installer.state(configDir: dir, binary: cli), liveEnabled: live[dir] != nil,
+                     isUserAdded: !scanned.contains(dir))
         }
     }
 
