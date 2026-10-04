@@ -58,6 +58,9 @@ final class UsageModel {
     private(set) var now = Date()
     private(set) var launchAtLogin = SMAppService.mainApp.status == .enabled
     private(set) var live: [String: LiveState] = [:]
+    /// Opened from a quarantined download before being moved; installs would point at a
+    /// temporary copy that macOS deletes, so setup is blocked until the app is moved.
+    let isTranslocated = Installer.isTranslocated(ExecutablePath.current())
     var lastError: String?
 
     @ObservationIgnored private let store = SnapshotStore()
@@ -79,9 +82,10 @@ final class UsageModel {
     init() {
         try? store.paths.ensureDirectories()
         if Bundle.main.bundleURL.pathExtension == "app" {
-            installer.repoint(to: cli)
+            installer.repoint(to: cli) // does nothing from a translocated copy
         }
         store.pruneSessions(olderThan: Self.sessionRetention)
+        store.pruneOutdatedAccountKeys()
         for dir in UserDefaults.standard.stringArray(forKey: Self.liveDefaultsKey) ?? [] {
             live[dir] = LiveState()
         }
@@ -308,8 +312,11 @@ final class UsageModel {
         moments += lastSnapshots.map { $0.updatedAt.addingTimeInterval(staleAfter($0.configDir)) }
         moments += lastSessions.compactMap { $0.lastReplyAt?.addingTimeInterval(Self.idleAfter) }
         moments += live.values.compactMap(\.nextDue)
-        moments.append(Calendar.current.startOfDay(for: now).addingTimeInterval(24 * 3600))
-        let next = moments.filter { $0 > now }.min()!.addingTimeInterval(1)
+        // Not startOfDay + 24h: that's 23:00 on the day the clocks go back.
+        if let midnight = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: now)) {
+            moments.append(midnight)
+        }
+        let next = (moments.filter { $0 > now }.min() ?? now.addingTimeInterval(3600)).addingTimeInterval(1)
         wakeTimer = Timer.scheduledTimer(withTimeInterval: next.timeIntervalSince(now), repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.runDueLiveChecks()

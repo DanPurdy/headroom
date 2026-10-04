@@ -31,8 +31,10 @@ enum LiveFetcher {
     }
 
     static func fetch(configDir: String) async throws(Failure) -> Result {
-        guard let credentials = UsageAPI.keychainServices(configDir: configDir)
-            .lazy.compactMap(readKeychain).compactMap(UsageAPI.parseCredentials).first
+        // If several entries could belong to this folder, the one Claude Code renewed last wins.
+        let candidates = UsageAPI.keychainServices(configDir: configDir)
+            .compactMap(readKeychain).compactMap(UsageAPI.parseCredentials)
+        guard let credentials = candidates.max(by: { ($0.expiresAt ?? .distantPast) < ($1.expiresAt ?? .distantPast) })
         else { throw .noLogin }
         if let expiry = credentials.expiresAt, expiry <= Date() { throw .expired }
 
@@ -41,7 +43,7 @@ enum LiveFetcher {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await session.data(for: request)
         } catch {
             throw .network(error.localizedDescription)
         }
@@ -56,6 +58,17 @@ enum LiveFetcher {
             throw .rateLimited(retryAfter: UsageAPI.retryAfter(http.value(forHTTPHeaderField: "Retry-After")))
         default:
             throw .http(http.statusCode)
+        }
+    }
+
+    /// Ephemeral, so neither the response nor the request (with its bearer token) is cached on
+    /// disk and no cookies are kept; and redirects are refused, so the token only goes to `url`.
+    private static let session = URLSession(configuration: .ephemeral, delegate: NoRedirects(), delegateQueue: nil)
+
+    private final class NoRedirects: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest) async -> URLRequest? {
+            nil
         }
     }
 

@@ -10,6 +10,13 @@ struct SettingsPage: View {
             Text("Claude Code accounts")
                 .font(.subheadline.weight(.semibold))
 
+            if model.isTranslocated {
+                Text("Move Headroom to your Applications folder and open it from there before installing.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             if model.setupRows.isEmpty {
                 Text("No Claude Code folders found in your home folder. Headroom needs Claude Code on this Mac: install it and log in, or add your folder if it lives somewhere else.")
                     .font(.caption)
