@@ -177,3 +177,7 @@ Codex CLI records the same kind of data in its session logs. In
 
 `rate_limits` can be `null`. Watching that folder and reading the newest file's last
 non-null `rate_limits` would give a Codex card with no login or tokens involved.
+
+## Licence
+
+[MIT](LICENSE).
