@@ -130,6 +130,55 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         #expect(second.projectDir == "/work/app")
         #expect(second.name == "fix login")
     }
+
+    private func input(cost: Double) throws -> StatusLineInput {
+        try StatusLineInput.decode(Data(#"{"session_id": "s", "cost": {"total_cost_usd": \#(cost)}}"#.utf8))
+    }
+
+    /// Records `costs` one reply an hour apart, ending at `now`.
+    private func session(_ costs: [Double]) throws -> SessionSnapshot {
+        var snapshot: SessionSnapshot?
+        for (index, cost) in costs.enumerated() {
+            let at = now.addingTimeInterval(Double(index - costs.count + 1) * 3600)
+            snapshot = SessionSnapshot.from(try input(cost: cost), configDir: "/x", process: nil,
+                                            lastReplyAt: at, previous: snapshot, now: at)
+        }
+        return try #require(snapshot)
+    }
+
+    @Test func costWithinPeriodCountsOnlySpendInIt() throws {
+        let s = try session([1, 3, 4.5]) // replies at now-2h, now-1h, now
+        #expect(s.cost(since: now.addingTimeInterval(-30 * 60)) == 1.5)
+        #expect(s.cost(since: now.addingTimeInterval(-90 * 60)) == 3.5)
+        #expect(s.cost(since: now.addingTimeInterval(-3 * 3600)) == 4.5)
+        #expect(s.cost(since: now) == 0)
+    }
+
+    @Test func resumedSessionRestartingFromZeroCountsAsNewSpend() throws {
+        let s = try session([5, 0.5])
+        #expect(s.cost(since: now.addingTimeInterval(-30 * 60)) == 0.5)
+    }
+
+    @Test func unchangedCostAddsNoSample() throws {
+        #expect(try session([2, 2, 2]).costSamples?.count == 1)
+    }
+
+    @Test func oldSamplesArePrunedButKeepABaseline() throws {
+        let s = try session(Array(stride(from: 1.0, through: 30, by: 1))) // 30 hourly replies
+        #expect(s.costSamples?.count == 26) // from the baseline at the 25h cutoff to now
+        #expect(s.cost(since: now.addingTimeInterval(-24.5 * 3600)) == 25)
+    }
+
+    @Test func sessionFromBeforeSamplesDoesNotCountOldSpend() throws {
+        let earlier = now.addingTimeInterval(-3600)
+        let legacy = SessionSnapshot(sessionId: "s", accountKey: "k", name: nil, projectDir: nil, model: nil, costUSD: 10,
+                                     contextPercentage: nil, process: nil, lastReplyAt: earlier, firstSeenAt: earlier,
+                                     updatedAt: earlier)
+        let updated = try #require(SessionSnapshot.from(try input(cost: 12), configDir: "/x", process: nil,
+                                                        lastReplyAt: now, previous: legacy, now: now))
+        #expect(updated.cost(since: now.addingTimeInterval(-30 * 60)) == 2)
+        #expect(legacy.cost(since: now.addingTimeInterval(-2 * 3600)) == 10)
+    }
 }
 
 @Suite struct Store {

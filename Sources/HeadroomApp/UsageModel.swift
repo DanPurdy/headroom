@@ -60,6 +60,8 @@ final class UsageModel {
     private(set) var now = Date()
     private(set) var launchAtLogin = SMAppService.mainApp.status == .enabled
     private(set) var live: [String: LiveState] = [:]
+    /// Every recorded session, open or not (kept for `sessionRetention`).
+    private(set) var sessions: [SessionSnapshot] = []
     /// Opened from a quarantined download before being moved; installs would point at a
     /// temporary copy that macOS deletes, so setup is blocked until the app is moved.
     let isTranslocated = Installer.isTranslocated(ExecutablePath.current())
@@ -268,15 +270,14 @@ final class UsageModel {
         for key in rows.keys {
             guard var row = rows[key] else { continue }
             row.activeSessions = active.filter { $0.accountKey == key }.sorted { $0.updatedAt > $1.updatedAt }
-            row.costToday = lastSessions
-                .filter { $0.accountKey == key && Calendar.current.isDateInToday($0.updatedAt) }
-                .compactMap(\.costUSD)
-                .reduce(0, +)
+            let today = Calendar.current.startOfDay(for: now)
+            row.costToday = lastSessions.filter { $0.accountKey == key }.map { $0.cost(since: today) }.reduce(0, +)
             row.live = live[row.configDir]
             row.isStale = row.snapshot.map { now > $0.updatedAt.addingTimeInterval(staleAfter(row.configDir)) } ?? false
             rows[key] = row
         }
         accounts = rows.values.sorted { $0.label.localizedStandardCompare($1.label) == .orderedAscending }
+        sessions = lastSessions
 
         let scanned = ConfigDir.detect()
         var dirs = scanned

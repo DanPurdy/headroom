@@ -106,10 +106,12 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     public var lastReplyAt: Date?
     public var firstSeenAt: Date
     public var updatedAt: Date
+    /// `costUSD` over time, for spend within a period. nil in files from before it existed.
+    public var costSamples: [CostSample]?
 
     public init(sessionId: String, accountKey: String, name: String?, projectDir: String?, model: String?,
                 costUSD: Double?, contextPercentage: Double?, process: ProcessIdentity?, lastReplyAt: Date? = nil,
-                firstSeenAt: Date, updatedAt: Date) {
+                firstSeenAt: Date, updatedAt: Date, costSamples: [CostSample]? = nil) {
         self.sessionId = sessionId
         self.accountKey = accountKey
         self.name = name
@@ -121,6 +123,42 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         self.lastReplyAt = lastReplyAt
         self.firstSeenAt = firstSeenAt
         self.updatedAt = updatedAt
+        self.costSamples = costSamples
+    }
+
+    /// How far back samples are kept; longer than any period the app shows.
+    public static let costHistory: TimeInterval = 25 * 3600
+
+    /// Estimated spend in this session after `start`, from the cost samples.
+    public func cost(since start: Date) -> Double {
+        let samples = costSamples ?? costUSD.map { [CostSample(at: lastReplyAt ?? updatedAt, usd: $0)] } ?? []
+        var total = 0.0
+        var previous: Double?
+        for sample in samples {
+            // Claude Code's total restarts from zero when a session is resumed in a new process.
+            let spent = previous.map { sample.usd >= $0 ? sample.usd - $0 : sample.usd } ?? sample.usd
+            if sample.at > start { total += spent }
+            previous = sample.usd
+        }
+        return total
+    }
+
+    /// Samples with `usd` appended if the total changed, dropping those older than
+    /// `costHistory` except the newest of them, which the next sample's spend is measured from.
+    static func samples(_ previous: SessionSnapshot?, adding usd: Double?, at time: Date, now: Date) -> [CostSample]? {
+        var samples = previous?.costSamples ?? []
+        if samples.isEmpty, let previous, let old = previous.costUSD {
+            // A session recorded before samples existed: what it had spent then isn't new spend.
+            samples = [CostSample(at: previous.lastReplyAt ?? previous.updatedAt, usd: old)]
+        }
+        if let usd, usd != samples.last?.usd {
+            samples.append(CostSample(at: max(time, samples.last?.at ?? time), usd: usd))
+        }
+        let cutoff = now.addingTimeInterval(-costHistory)
+        if let anchor = samples.lastIndex(where: { $0.at <= cutoff }) {
+            samples.removeFirst(anchor)
+        }
+        return samples.isEmpty ? nil : samples
     }
 
     public static func from(_ input: StatusLineInput, configDir: String, process: ProcessIdentity?,
@@ -137,7 +175,19 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
             process: process ?? previous?.process,
             lastReplyAt: lastReplyAt ?? previous?.lastReplyAt,
             firstSeenAt: previous?.firstSeenAt ?? now,
-            updatedAt: now
+            updatedAt: now,
+            costSamples: samples(previous, adding: input.cost?.totalCostUsd, at: lastReplyAt ?? now, now: now)
         )
+    }
+}
+
+/// Claude Code's running cost estimate for a session at one moment.
+public struct CostSample: Codable, Equatable, Sendable {
+    public var at: Date
+    public var usd: Double
+
+    public init(at: Date, usd: Double) {
+        self.at = at
+        self.usd = usd
     }
 }
