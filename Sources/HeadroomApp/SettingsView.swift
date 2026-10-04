@@ -32,7 +32,7 @@ struct SettingsPage: View {
             if let error = model.lastError {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
-            Text("Each folder is one Claude login. Install wraps its status line so Headroom records usage after every Claude Code reply. Your status line keeps working, and Remove puts it back.\n\nLive also checks usage hourly and on ⟳, catching use from claude.ai, the desktop app and other devices. It reads Claude Code's saved login from your Keychain (read-only; macOS asks first) and calls Anthropic's undocumented usage endpoint.")
+            Text("Each folder is one Claude login. Install wraps its status line so Headroom records usage after every Claude Code reply. Your status line keeps working, and Remove puts it back.\n\nLive also checks usage hourly and on ⟳, catching use from claude.ai, the desktop app and other devices. It reads Claude Code's saved login from your Keychain only when you switch Live on or press ⟳ (read-only; macOS may ask, so choose Always Allow), keeps it in memory until it expires, and calls Anthropic's undocumented usage endpoint.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

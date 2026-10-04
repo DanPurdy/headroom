@@ -41,9 +41,11 @@ struct LiveState {
     var retryAt: Date?
     var error: String?
     var plan: String?
+    /// Waiting for the user to press ⟳, because the check needs the Keychain.
+    var paused = false
 
     var nextDue: Date? {
-        retryAt ?? lastAttempt.map { $0.addingTimeInterval(UsageAPI.refreshInterval) }
+        paused ? nil : retryAt ?? lastAttempt.map { $0.addingTimeInterval(UsageAPI.refreshInterval) }
     }
 }
 
@@ -158,12 +160,15 @@ final class UsageModel {
 
     func setLive(configDir: String, enabled: Bool) {
         live[configDir] = enabled ? LiveState() : nil
+        if !enabled { LiveFetcher.forget(configDir: configDir) }
         UserDefaults.standard.set(Array(live.keys).sorted(), forKey: Self.liveDefaultsKey)
         reload()
-        if enabled { refreshLive(configDir: configDir) }
+        if enabled { refreshLive(configDir: configDir, interactive: true) }
     }
 
-    func refreshLive(configDir: String) {
+    /// `interactive` when the user asked (⟳ or switching Live on): only then may it read the
+    /// Keychain, which can show a macOS prompt.
+    func refreshLive(configDir: String, interactive: Bool) {
         guard var state = live[configDir], !state.refreshing else { return }
         state.refreshing = true
         state.lastAttempt = Date()
@@ -173,7 +178,7 @@ final class UsageModel {
 
         Task.detached(priority: .utility) {
             let result: Swift.Result<LiveFetcher.Result, LiveFetcher.Failure>
-            do { result = .success(try await LiveFetcher.fetch(configDir: configDir)) } catch { result = .failure(error as? LiveFetcher.Failure ?? .unreadable) }
+            do { result = .success(try await LiveFetcher.fetch(configDir: configDir, interactive: interactive)) } catch { result = .failure(error as? LiveFetcher.Failure ?? .unreadable) }
             await MainActor.run { self.finishLive(configDir: configDir, result: result) }
         }
     }
@@ -185,6 +190,7 @@ final class UsageModel {
         case .success(let fetched):
             state.lastSuccess = Date()
             state.error = nil
+            state.paused = false
             state.plan = fetched.plan
             let label = installer.record(for: configDir)?.label ?? ConfigDir.defaultLabel(for: configDir)
             let incoming = AccountSnapshot(key: ConfigDir.key(for: configDir), label: label, configDir: configDir,
@@ -194,6 +200,7 @@ final class UsageModel {
             try? store.write(merged) // the directory watcher reloads
         case .failure(let failure):
             state.error = failure.message
+            if case .needsAccess = failure { state.paused = true }
             if case .rateLimited(let retryAfter) = failure {
                 state.retryAt = Date().addingTimeInterval(max(retryAfter ?? 0, 5 * 60))
             }
@@ -204,8 +211,8 @@ final class UsageModel {
 
     private func runDueLiveChecks() {
         let now = Date()
-        for (dir, state) in live where (state.nextDue.map { $0 <= now } ?? true) {
-            refreshLive(configDir: dir)
+        for (dir, state) in live where !state.paused && (state.nextDue.map { $0 <= now } ?? true) {
+            refreshLive(configDir: dir, interactive: false)
         }
     }
 
@@ -283,7 +290,7 @@ final class UsageModel {
 
     /// Live accounts are checked hourly, so only call them stale once a check is overdue.
     private func staleAfter(_ configDir: String) -> TimeInterval {
-        live[configDir] != nil ? UsageAPI.refreshInterval + 10 * 60 : AccountSnapshot.staleAfter
+        live[configDir].map { !$0.paused } ?? false ? UsageAPI.refreshInterval + 10 * 60 : AccountSnapshot.staleAfter
     }
 
     /// One kqueue exit source per running session, so a closed session drops off immediately.

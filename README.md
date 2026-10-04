@@ -80,14 +80,17 @@ with an orange "as of" age so you can tell.
 Live also checks an account's usage once an hour and whenever you press ⟳ on its card, so
 it catches use from anywhere: claude.ai, the desktop app, mobile and other machines.
 
-- It reads the login Claude Code saved in your Keychain. macOS asks you first; choose
-  **Always Allow**. Because releases aren't signed with a Developer ID yet, macOS will
-  probably ask again after each update.
+- It reads the login Claude Code saved in your Keychain, but only when you switch Live on or
+  press ⟳, never in the background. macOS may ask first; choose **Always Allow**. Because
+  releases aren't signed with a Developer ID yet, macOS will probably ask again after each
+  update.
+- The login is kept in memory, not on disk, and the hourly checks reuse it. When it expires,
+  or after Headroom restarts, Live pauses until you press ⟳.
 - It sends that login to `https://api.anthropic.com/api/oauth/usage`, the undocumented
   endpoint behind Claude Code's `/usage`. Being undocumented, it could change without notice.
 - Headroom only reads the login. It never refreshes or replaces it, so it can't log Claude
   Code out. If the saved login has expired, Live says so until Claude Code next runs on that
-  account.
+  account and you press ⟳.
 - If Anthropic rate-limits the check, Headroom waits at least 5 minutes before trying again.
 
 ## Command line
