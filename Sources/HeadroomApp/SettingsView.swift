@@ -60,7 +60,7 @@ extension SettingsPage {
         panel.allowsMultipleSelection = false
         panel.showsHiddenFiles = true
         panel.directoryURL = URL(fileURLWithPath: NSHomeDirectory())
-        panel.message = "Choose a Claude Code config folder (the one CLAUDE_CONFIG_DIR points at)."
+        panel.message = "Choose a Claude Code folder"
         panel.prompt = "Add"
         NSApplication.shared.activate()
         if panel.runModal() == .OK, let url = panel.url {

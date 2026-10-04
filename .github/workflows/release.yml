@@ -1,6 +1,8 @@
 name: Release
 
-# Push a tag like v0.1.0 to publish dist/Headroom-0.1.0.zip as a GitHub release.
+# Publishes Headroom-<version>.zip as a GitHub release. Either:
+#   - Actions → Release → Run workflow on main, entering a version like 0.1.0, or
+#   - push a tag like v0.1.0.
 #
 # Signing and notarisation are optional. Without these secrets the app is ad-hoc signed:
 # it works, but a browser download is quarantined and macOS asks the user to approve it
@@ -13,6 +15,11 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.1.0 (creates tag v0.1.0 on main)"
+        required: true
 
 permissions:
   contents: write
@@ -24,6 +31,20 @@ jobs:
       HAS_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo "::error::Run releases from main"; exit 1; }
+            version="${INPUT_VERSION#v}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::Not a version: $version"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "TAG=v$version" >> "$GITHUB_ENV"
 
       - name: Test
         run: scripts/test.sh
@@ -46,7 +67,7 @@ jobs:
       - name: Build
         env:
           SIGN_IDENTITY: ${{ env.HAS_SIGNING == 'true' && secrets.MACOS_SIGN_IDENTITY || '' }}
-        run: VERSION="${GITHUB_REF_NAME#v}" UNIVERSAL=1 scripts/build-app.sh
+        run: UNIVERSAL=1 scripts/build-app.sh
 
       - name: Notarise
         if: env.HAS_SIGNING == 'true'
@@ -55,7 +76,7 @@ jobs:
           TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
           PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
         run: |
-          zip="dist/Headroom-${GITHUB_REF_NAME#v}.zip"
+          zip="dist/Headroom-$VERSION.zip"
           xcrun notarytool submit "$zip" --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$PASSWORD" --wait
           xcrun stapler staple dist/Headroom.app
           rm "$zip" && ditto -c -k --keepParent dist/Headroom.app "$zip"
@@ -63,4 +84,10 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/Headroom-*.zip --generate-notes --verify-tag
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            # Creates the tag on the commit that was built.
+            gh release create "$TAG" dist/Headroom-*.zip --generate-notes --target "$GITHUB_SHA"
+          else
+            gh release create "$TAG" dist/Headroom-*.zip --generate-notes --verify-tag
+          fi
