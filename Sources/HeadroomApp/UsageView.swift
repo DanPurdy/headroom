@@ -1,22 +1,56 @@
 import HeadroomCore
 import SwiftUI
 
+/// The dropdown: a header, then either the usage page or the settings page.
 struct UsageView: View {
     let model: UsageModel
-    @Environment(\.openSettings) private var openSettings
+    @State private var showingSettings = false
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            header
+            if showingSettings {
+                SettingsPage(model: model)
+            } else {
+                usage
+            }
+        }
+        .padding(14)
+        .frame(width: 340)
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            if showingSettings {
+                Button { showingSettings = false } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .buttonStyle(.borderless)
+                .help("Back to usage")
+            }
+            HeaderGlyph()
+            Text(showingSettings ? "Settings" : "Headroom").font(.headline)
+            Spacer()
+            if !showingSettings {
+                Button { showingSettings = true } label: {
+                    Image(systemName: "gearshape")
+                }
+                .buttonStyle(.borderless)
+                .help("Settings")
+            }
+        }
+    }
+
+    private var usage: some View {
         // Ticks only while the panel is open, to keep countdowns current.
         TimelineView(.everyMinute) { context in
             VStack(alignment: .leading, spacing: 12) {
-                header
-
                 if model.accounts.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("No Claude Code accounts connected yet. Connect them in Settings, then send a message in Claude Code.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
-                        Button("Open Settings…", action: showSettings)
+                        Button("Open Settings") { showingSettings = true }
                     }
                 }
                 ForEach(model.accounts) { row in
@@ -27,44 +61,37 @@ struct UsageView: View {
                     Text(error).font(.caption).foregroundStyle(.red)
                 }
 
-                Divider()
-
                 HStack {
                     let pending = model.setupRows.filter { !$0.isConnected }.count
                     if pending > 0, !model.accounts.isEmpty {
-                        Button("\(pending) Claude folder\(pending == 1 ? "" : "s") not connected", action: showSettings)
+                        Button("\(pending) Claude folder\(pending == 1 ? "" : "s") not connected") { showingSettings = true }
                             .buttonStyle(.link)
                             .foregroundStyle(.orange)
                     }
                     Spacer()
-                    Button("Quit Headroom") { NSApplication.shared.terminate(nil) }
+                    Button("Quit") { NSApplication.shared.terminate(nil) }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
                 }
-                .font(.callout)
+                .font(.caption)
             }
-            .padding(14)
-            .frame(width: 340)
         }
     }
+}
 
-    private var header: some View {
-        HStack(spacing: 8) {
-            Image(nsImage: NSApplication.shared.applicationIconImage)
+/// The app icon's head, without the tile (which fringes at this size).
+struct HeaderGlyph: View {
+    var body: some View {
+        if let image = Bundle.main.image(forResource: "HeaderGlyph") {
+            Image(nsImage: image)
                 .resizable()
-                .frame(width: 24, height: 24)
-            Text("Headroom").font(.headline)
-            Spacer()
-            Button(action: showSettings) {
-                Image(systemName: "gearshape")
-            }
-            .buttonStyle(.borderless)
-            .help("Settings")
+                .scaledToFit()
+                .frame(height: 20)
+        } else {
+            // Running from `swift run`, outside the app bundle.
+            Image(systemName: "person.crop.circle")
+                .foregroundStyle(.orange)
         }
-    }
-
-    /// A menu bar app is never frontmost, so bring the settings window forward explicitly.
-    private func showSettings() {
-        openSettings()
-        NSApplication.shared.activate()
     }
 }
 
@@ -117,8 +144,8 @@ struct LimitBar: View {
     let now: Date
 
     var body: some View {
-        let used = window?.usedPercentage(at: now) ?? 0
-        VStack(alignment: .leading, spacing: 3) {
+        let used = min(max(window?.usedPercentage(at: now) ?? 0, 0), 100)
+        VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(title)
                 Spacer()
@@ -130,9 +157,16 @@ struct LimitBar: View {
                 }
             }
             .font(.caption)
-            ProgressView(value: min(used, 100), total: 100)
-                .progressViewStyle(.linear)
-                .tint(used >= 90 ? .red : used >= 70 ? .orange : .accentColor)
+            // Drawn by hand: ProgressView shows a stub at 0%.
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.quaternary)
+                    Capsule()
+                        .fill(used >= 90 ? Color.red : Color.orange)
+                        .frame(width: geometry.size.width * used / 100)
+                }
+            }
+            .frame(height: 6)
         }
     }
 }
@@ -145,11 +179,19 @@ struct SessionLine: View {
             Circle().fill(.green).frame(width: 6, height: 6)
             Text(session.name ?? session.projectDir.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "session")
                 .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer()
-            if let model = session.model { Text(model).foregroundStyle(.secondary) }
+                .truncationMode(.tail)
+            Spacer(minLength: 8)
+            if let model = session.model {
+                Text(Formatting.modelName(model))
+                    .lineLimit(1)
+                    .fixedSize()
+                    .foregroundStyle(.secondary)
+            }
             if let context = session.contextPercentage {
-                Text("\(Formatting.percent(context)) ctx").monospacedDigit().foregroundStyle(.secondary)
+                Text("\(Formatting.percent(context)) ctx")
+                    .monospacedDigit()
+                    .fixedSize()
+                    .foregroundStyle(.secondary)
             }
         }
         .font(.caption)

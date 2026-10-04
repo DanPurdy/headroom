@@ -19,7 +19,7 @@ rm -rf dist
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin/HeadroomApp" "$app/Contents/MacOS/HeadroomApp"
 cp "$bin/headroom" "$app/Contents/MacOS/headroom"
-cp assets/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
+cp assets/AppIcon.icns assets/HeaderGlyph.png "$app/Contents/Resources/"
 
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

@@ -25,6 +25,11 @@ public enum Formatting {
         "\(Int(value.rounded()))%"
     }
 
+    /// "Opus 5.5 (1M context)" -> "Opus 5.5 1M", so it fits beside a session name.
+    public static func modelName(_ name: String) -> String {
+        name.replacingOccurrences(of: #"\s*\((\S+) context\)"#, with: " $1", options: .regularExpression)
+    }
+
     public static func usd(_ value: Double) -> String {
         String(format: "$%.2f", value)
     }

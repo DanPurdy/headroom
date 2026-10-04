@@ -30,18 +30,26 @@
       L 620 808
       C 692 834, 788 866, 808 940
       Z"/>
+    <!-- The level: everything below this wave is orange -->
+    <path id="wave" d="M 100 548 C 170 524, 250 572, 330 548 S 490 524, 570 548 S 730 572, 924 548 L 924 960 L 100 960 Z"/>
     <clipPath id="headClip"><use href="#head"/></clipPath>
+    <!-- Cream stops just under the wave, so no cream is ever drawn beneath the orange's outer
+         edge (stacking the two leaves a light fringe once anti-aliased at small sizes) -->
+    <mask id="aboveWave">
+      <rect width="1024" height="1024" fill="white"/>
+      <use href="#wave" fill="black" transform="translate(0 6)"/>
+    </mask>
     <clipPath id="tile"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
   </defs>
 
   <!-- macOS icon tile: 824pt square on the 1024 grid -->
   <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
 
-  <g clip-path="url(#tile)">
-    <use href="#head" fill="#ECE7E0"/>
-    <!-- The level: orange fills the head from the bottom, with a gentle wave on top -->
+  <!-- Exported on its own (rsvg-convert -i glyph) for the dropdown header -->
+  <g id="glyph" clip-path="url(#tile)">
+    <use href="#head" fill="#ECE7E0" mask="url(#aboveWave)"/>
     <g clip-path="url(#headClip)">
-      <path d="M 100 548 C 170 524, 250 572, 330 548 S 490 524, 570 548 S 730 572, 924 548 L 924 960 L 100 960 Z" fill="url(#fill)"/>
+      <use href="#wave" fill="url(#fill)"/>
     </g>
   </g>
 </svg>

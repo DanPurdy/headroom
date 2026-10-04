@@ -228,6 +228,11 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         #expect(Formatting.countdown(until: now.addingTimeInterval(-5), from: now) == "now")
     }
 
+    @Test func modelNames() {
+        #expect(Formatting.modelName("Opus 5.5 (1M context)") == "Opus 5.5 1M")
+        #expect(Formatting.modelName("Sonnet 5.5") == "Sonnet 5.5")
+    }
+
     @Test func ages() {
         #expect(Formatting.age(of: now, at: now.addingTimeInterval(30)) == "just now")
         #expect(Formatting.age(of: now, at: now.addingTimeInterval(3 * 3600)) == "3h ago")
