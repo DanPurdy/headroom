@@ -8,8 +8,9 @@ struct HeadroomApp: App {
         MenuBarExtra {
             UsageView(model: model)
         } label: {
-            if let title = model.menuBarTitle {
-                Text(title)
+            if let gauge = MenuBarGauge.image(for: model.menuBarColumns) {
+                Image(nsImage: gauge)
+                    .accessibilityLabel(model.menuBarDescription)
             } else {
                 Image(systemName: "gauge.with.dots.needle.33percent")
             }

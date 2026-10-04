@@ -3,8 +3,9 @@
 A macOS menu bar app showing how much of your Claude plan's limits you've used, across
 several Claude Code accounts at once.
 
-- **5-hour and weekly limits** per account, with reset countdowns. The menu bar shows each
-  account's 5-hour usage, e.g. `M 23%  P 5%`.
+- **5-hour and weekly limits** per account, with reset countdowns. The menu bar shows one
+  column per account: its label beside two stacked bars with percentages, 5-hour on top
+  and weekly below.
 - **Active Claude Code sessions** per account: project, model, context used.
 - **Today's API-equivalent cost** per account, as estimated by Claude Code. It is not what
   your subscription bills.

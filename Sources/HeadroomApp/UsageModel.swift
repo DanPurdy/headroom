@@ -63,15 +63,22 @@ final class UsageModel {
         reload()
     }
 
-    /// The text shown in the menu bar: each account's 5-hour usage, e.g. "M 23%  P 5%".
-    var menuBarTitle: String? {
-        let parts = accounts.compactMap { row -> String? in
+    /// One menu bar column per account that has reported usage.
+    /// A window missing from a snapshot has reset, so it counts as 0%.
+    var menuBarColumns: [MenuBarGauge.Column] {
+        accounts.compactMap { row in
             guard let snapshot = row.snapshot else { return nil }
-            // A window missing from a snapshot has reset.
-            let used = snapshot.fiveHour?.usedPercentage(at: now) ?? 0
-            return "\(row.label.prefix(1)) \(Formatting.percent(used))"
+            return MenuBarGauge.Column(id: row.key, label: row.label,
+                                       fiveHour: snapshot.fiveHour?.usedPercentage(at: now) ?? 0,
+                                       weekly: snapshot.sevenDay?.usedPercentage(at: now) ?? 0)
         }
-        return parts.isEmpty ? nil : parts.joined(separator: "  ")
+    }
+
+    /// Spoken by VoiceOver for the menu bar item, e.g. "Main 5-hour 0%, weekly 34%".
+    var menuBarDescription: String {
+        menuBarColumns.map {
+            "\($0.label) 5-hour \(Formatting.percent($0.fiveHour)), weekly \(Formatting.percent($0.weekly))"
+        }.joined(separator: "; ")
     }
 
     var needsSetup: Bool {
