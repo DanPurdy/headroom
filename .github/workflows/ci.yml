@@ -1,0 +1,16 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        run: scripts/test.sh
+      - name: Build app
+        run: UNIVERSAL=1 scripts/build-app.sh
