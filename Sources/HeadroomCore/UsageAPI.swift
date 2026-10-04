@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 /// Optional "Live" usage: the endpoint Claude Code's `/usage` calls, authorised with the login
@@ -42,17 +41,10 @@ public enum UsageAPI {
     public static func keychainServices(configDir: String) -> [String] {
         let base = "Claude Code-credentials"
         let dir = ConfigDir.normalize(configDir)
-        let hashed = [dir, dir + "/"].map { base + "-" + hash8($0) }
+        let hashed = [dir, dir + "/"].map { base + "-" + ConfigDir.sha8($0) }
         // Only the default folder may use the unsuffixed entry; for any other folder it
         // would be a different account's login.
         return dir == ConfigDir.normalize(ConfigDir.defaultPath) ? [base] + hashed : hashed
-    }
-
-    static func hash8(_ value: String) -> String {
-        SHA256.hash(data: Data(value.precomposedStringWithCanonicalMapping.utf8))
-            .prefix(4)
-            .map { String(format: "%02x", $0) }
-            .joined()
     }
 
     public static func request(token: String, userAgent: String) -> URLRequest {

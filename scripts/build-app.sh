@@ -45,8 +45,10 @@ if [[ -n "${SIGN_IDENTITY:-}" ]]; then
   codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$app/Contents/MacOS/headroom"
   codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$app"
 else
-  codesign --force --sign - "$app/Contents/MacOS/headroom"
-  codesign --force --sign - "$app"
+  # Ad-hoc, but still with the hardened runtime, so no library can be injected into the app
+  # once it has Keychain access.
+  codesign --force --options runtime --sign - "$app/Contents/MacOS/headroom"
+  codesign --force --options runtime --sign - "$app"
 fi
 codesign --verify --strict "$app"
 

@@ -58,7 +58,8 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
     @Test func accountSnapshotFromRateLimits() throws {
         let input = try StatusLineInput.decode(Data(sampleInput.utf8))
         let account = try #require(AccountSnapshot.from(input, label: "Work", configDir: "/Users/me/.claude", measuredAt: now))
-        #expect(account.key == "Users-me-claude")
+        #expect(account.key == ConfigDir.key(for: "/Users/me/.claude"))
+        #expect(account.key.hasPrefix("Users-me-claude-"))
         #expect(account.fiveHour == LimitWindow(usedPercentage: 23.5, resetsAt: Date(timeIntervalSince1970: 1738425600)))
         #expect(account.sevenDay?.usedPercentage == 41.2)
     }
@@ -140,7 +141,7 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         #expect(store.accounts().map(\.label) == ["Work"])
         #expect(store.accounts().first?.updatedAt == now)
         #expect(store.sessions().map(\.sessionId) == ["abc-123"])
-        #expect(store.sessions().first?.accountKey == "Users-me-claude-work")
+        #expect(store.sessions().first?.accountKey == ConfigDir.key(for: "/Users/me/.claude-work"))
     }
 
     @Test func recorderDatesReadingsByLastReply() throws {
@@ -190,6 +191,13 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         try FileManager.default.createDirectory(atPath: claude + "/projects", withIntermediateDirectories: true)
         #expect(ConfigDir.looksLikeClaudeConfig(claude))
         #expect(!ConfigDir.looksLikeClaudeConfig(try tempConfigDir(settings: nil)))
+        // A project's checked-in .claude/ has settings.json but isn't an account folder.
+        #expect(!ConfigDir.looksLikeClaudeConfig(try tempConfigDir(settings: "{}")))
+    }
+
+    @Test func keysDistinguishPunctuation() {
+        #expect(ConfigDir.key(for: "/Users/me/.claude-work") != ConfigDir.key(for: "/Users/me/.claude_work"))
+        #expect(ConfigDir.key(for: "/Users/me/.claude-work") == ConfigDir.key(for: "/Users/me/./.claude-work"))
     }
 
     @Test func detectsClaudeDirectoriesOnly() throws {
@@ -271,6 +279,68 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
 
         #expect(try FileManager.default.destinationOfSymbolicLink(atPath: link.path) == real + "/settings.json")
         #expect(try settingsJSON(real)["statusLine"] != nil)
+    }
+
+    @Test func lostRecordStillKeepsOriginal() throws {
+        let dir = try tempConfigDir(settings: #"{"statusLine":{"type":"command","command":"bash ~/sl.sh","padding":2}}"#)
+        let paths = tempPaths()
+        try Installer(paths: paths).install(configDir: dir, label: "Work", binary: binary)
+        // Headroom's data folder is deleted (or the record otherwise lost).
+        try FileManager.default.removeItem(at: paths.root)
+
+        let installer = Installer(paths: tempPaths())
+        #expect(installer.state(configDir: dir, binary: binary) == .installed(label: "Work"))
+        try installer.install(configDir: dir, label: "Job", binary: binary)
+        let reinstalled = try #require(try settingsJSON(dir)["statusLine"] as? [String: Any])
+        #expect((reinstalled["command"] as? String)?.hasSuffix("--then 'bash ~/sl.sh'") == true)
+
+        try FileManager.default.removeItem(at: installer.paths.root)
+        try Installer(paths: tempPaths()).uninstall(configDir: dir)
+        let restored = try #require(try settingsJSON(dir)["statusLine"] as? [String: Any])
+        #expect(restored["command"] as? String == "bash ~/sl.sh")
+        #expect(restored["padding"] as? Int == 2)
+    }
+
+    @Test func refusesSettingsSharedWithAnotherAccount() throws {
+        let first = try tempConfigDir(settings: #"{"statusLine":{"type":"command","command":"bash ~/sl.sh"}}"#)
+        let second = try tempConfigDir(settings: nil)
+        try FileManager.default.createSymbolicLink(atPath: second + "/settings.json", withDestinationPath: first + "/settings.json")
+        let installer = Installer(paths: tempPaths())
+        try installer.install(configDir: first, label: "Work", binary: binary)
+
+        #expect(throws: Installer.InstallError.self) { try installer.install(configDir: second, label: "Home", binary: binary) }
+        #expect(throws: Installer.InstallError.self) { try installer.uninstall(configDir: second) }
+        #expect(installer.state(configDir: second, binary: binary) == .notInstalled)
+        let command = try #require((try settingsJSON(first)["statusLine"] as? [String: Any])?["command"] as? String)
+        #expect(command.hasSuffix("--then 'bash ~/sl.sh'"))
+    }
+
+    @Test func onlyRecognisesItsOwnCommand() {
+        #expect(!Installer.isHeadroomCommand("~/bin/show-headroom statusline --fancy"))
+        #expect(!Installer.isHeadroomCommand("echo headroom statusline is great"))
+        let ours = Installer.command(binary: "/Apps/Head Room.app/Contents/MacOS/headroom", configDir: "/Users/o'brien/.claude",
+                                     label: "it's mine", then: "printf '%s' \"$(date)\"")
+        let wrapper = Installer.Wrapper.parse(ours)
+        #expect(wrapper == Installer.Wrapper(binary: "/Apps/Head Room.app/Contents/MacOS/headroom", configDir: "/Users/o'brien/.claude",
+                                             label: "it's mine", then: "printf '%s' \"$(date)\""))
+    }
+
+    @Test func repointLeavesInstallsOfACopyThatStillExists() throws {
+        let dir = try tempConfigDir(settings: "{}")
+        let installer = Installer(paths: tempPaths())
+        let existing = try tempConfigDir(settings: nil) + "/headroom"
+        FileManager.default.createFile(atPath: existing, contents: Data())
+        try installer.install(configDir: dir, label: "Work", binary: existing)
+        installer.repoint(to: binary)
+        #expect(installer.state(configDir: dir, binary: existing) == .installed(label: "Work"))
+    }
+
+    @Test func neverInstallsFromATranslocatedCopy() throws {
+        let dir = try tempConfigDir(settings: "{}")
+        let translocated = "/private/var/folders/x/AppTranslocation/ABC/d/Headroom.app/Contents/MacOS/headroom"
+        #expect(throws: Installer.InstallError.translocated) {
+            try Installer(paths: tempPaths()).install(configDir: dir, label: "Work", binary: translocated)
+        }
     }
 
     @Test func shellQuoting() {

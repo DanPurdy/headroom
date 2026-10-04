@@ -122,6 +122,12 @@ remove the `statusLine` entry from that folder's `settings.json`, or restore the
   folder, e.g. `CLAUDE_CONFIG_DIR=~/.claude-work claude`, then `/login`. Headroom finds the
   saved login using naming that Claude Code doesn't document, so please open an issue if it
   still fails.
+- **"Move Headroom to your Applications folder".** macOS runs a downloaded app from a
+  temporary copy until it has been moved, and Headroom won't point your status line at
+  that copy. Move it to Applications and open it again.
+- **"…settings.json is shared with …".** Two Claude Code folders use the same
+  `settings.json` (usually a symlink from a dotfiles repo), so Headroom can't tell their
+  usage apart. Give each folder its own `settings.json`.
 - **Numbers differ from claude.ai by a point.** Claude Code and claude.ai round differently.
 
 ## Develop

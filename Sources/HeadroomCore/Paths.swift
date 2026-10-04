@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Where Headroom keeps its snapshot files. The status line command writes here;
@@ -46,12 +47,21 @@ public enum ConfigDir {
         return URL(fileURLWithPath: expanded).standardizedFileURL.path
     }
 
-    /// Stable file-name-safe key, e.g. `/Users/me/.claude-work` -> `Users-me-claude-work`.
+    /// Stable file-name-safe key, e.g. `/Users/me/.claude-work` -> `Users-me-claude-work-1a2b3c4d`.
+    /// The hash keeps folders that differ only in punctuation (`.claude-work`, `.claude_work`) apart.
     public static func key(for path: String) -> String {
-        let mapped = normalize(path).unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? Character($0) : "-" }
-        return String(mapped)
-            .split(separator: "-", omittingEmptySubsequences: true)
-            .joined(separator: "-")
+        let dir = normalize(path)
+        let mapped = dir.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? Character($0) : "-" }
+        let readable = String(mapped).split(separator: "-", omittingEmptySubsequences: true).joined(separator: "-")
+        return readable + "-" + sha8(dir)
+    }
+
+    /// First 8 hex characters of SHA-256 over the NFC form of `value`.
+    public static func sha8(_ value: String) -> String {
+        SHA256.hash(data: Data(value.precomposedStringWithCanonicalMapping.utf8))
+            .prefix(4)
+            .map { String(format: "%02x", $0) }
+            .joined()
     }
 
     /// `.claude` -> "Main", `.claude-personal` -> "Personal".
@@ -64,7 +74,8 @@ public enum ConfigDir {
 
     /// Whether `path` looks like a Claude Code config dir (for folders the user picks by hand).
     public static func looksLikeClaudeConfig(_ path: String) -> Bool {
-        let markers = ["projects", "history.jsonl", "settings.json", ".claude.json"]
+        // Account-level markers only: a project's checked-in `.claude/` also has a settings.json.
+        let markers = ["projects", "history.jsonl", ".claude.json"]
         return markers.contains { FileManager.default.fileExists(atPath: normalize(path) + "/" + $0) }
     }
 

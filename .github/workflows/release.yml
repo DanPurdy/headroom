@@ -30,7 +30,10 @@ jobs:
     env:
       HAS_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Repo code runs in Test and Build; keep the write token out of .git/config.
+          persist-credentials: false
 
       - name: Resolve version
         env:

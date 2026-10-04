@@ -36,6 +36,16 @@ public struct SnapshotStore: Sendable {
         jsonFiles(in: paths.sessions).compactMap { decode(SessionSnapshot.self, at: $0) }
     }
 
+    /// Deletes account files saved under a different key format than `ConfigDir.key` produces now.
+    @discardableResult
+    public func pruneOutdatedAccountKeys() -> Int {
+        var removed = 0
+        for account in accounts() where account.key != ConfigDir.key(for: account.configDir) {
+            if (try? FileManager.default.removeItem(at: accountURL(account.key))) != nil { removed += 1 }
+        }
+        return removed
+    }
+
     /// Deletes session files not updated within `age`. Returns how many were removed.
     @discardableResult
     public func pruneSessions(olderThan age: TimeInterval, now: Date = Date()) -> Int {
