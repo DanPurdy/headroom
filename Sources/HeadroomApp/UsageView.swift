@@ -1,22 +1,30 @@
 import HeadroomCore
 import SwiftUI
 
-/// The dropdown: a header, then either the usage page or the settings page.
+/// The dropdown: a header, then the usage, history or settings page.
 struct UsageView: View {
     let model: UsageModel
+    @State private var tab = Tab.usage
     @State private var showingSettings = false
+
+    enum Tab: Hashable {
+        case usage, history
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
             if showingSettings {
                 SettingsPage(model: model)
+            } else if tab == .history {
+                HistoryPage(model: model)
             } else {
                 usage
             }
         }
         .padding(14)
         .frame(width: 340)
+        .background(WindowResizeRedraw())
     }
 
     private var header: some View {
@@ -26,12 +34,19 @@ struct UsageView: View {
                     Image(systemName: "chevron.left")
                 }
                 .buttonStyle(.borderless)
-                .help("Back to usage")
+                .help("Back")
             }
             HeaderGlyph()
             Text(showingSettings ? "Settings" : "Headroom").font(.headline)
             Spacer()
             if !showingSettings {
+                Picker("Page", selection: $tab) {
+                    Text("Usage").tag(Tab.usage)
+                    Text("History").tag(Tab.history)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
                 Button { showingSettings = true } label: {
                     Image(systemName: "gearshape")
                 }
@@ -233,5 +248,32 @@ struct SessionLine: View {
         }
         .font(.caption)
         .help(session.projectDir ?? "")
+    }
+}
+
+/// The menu's window keeps drawing its old outline when it shrinks (e.g. back from Settings),
+/// leaving a ghost of the larger panel around it. Redraw the shadow after every resize.
+struct WindowResizeRedraw: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { Observer() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    final class Observer: NSView {
+        private var token: NSObjectProtocol?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            token.map(NotificationCenter.default.removeObserver)
+            token = nil
+            guard let window else { return }
+            token = NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: window,
+                                                           queue: .main) { [weak window] _ in
+                window?.invalidateShadow()
+                window?.display()
+            }
+        }
+
+        deinit {
+            token.map(NotificationCenter.default.removeObserver)
+        }
     }
 }

@@ -12,6 +12,8 @@ every Claude Code account on your Mac at once.
   haven't replied for 15 minutes are marked idle.
 - **Today's API-equivalent cost** per account, as estimated by Claude Code. It is not what
   your subscription bills.
+- **History** of conversations with replies in the last 1, 12 or 24 hours, with what each
+  cost in that time, by the same estimate.
 - **Optional Live usage** per account, which also catches use from claude.ai, the desktop
   app and other devices.
 
