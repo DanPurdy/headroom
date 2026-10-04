@@ -1,3 +1,5 @@
+<img src="assets/icon.svg" width="128" alt="Headroom icon: a head in profile, filling up with orange">
+
 # Headroom
 
 A macOS menu bar app showing how much of your Claude plan's limits you've used, across
@@ -69,6 +71,7 @@ Requires macOS 14+ and Swift 6 (Xcode or the Command Line Tools).
 scripts/test.sh          # tests (works with Command Line Tools only)
 swift run HeadroomApp    # run the menu bar app from source
 scripts/build-app.sh     # dist/Headroom.app + zip (UNIVERSAL=1 for arm64+x86_64; needs Xcode)
+scripts/make-icon.sh     # regenerate assets/AppIcon.icns after editing assets/icon.svg
 ```
 
 `Sources/HeadroomCore` has everything testable: parsing, snapshots, the settings installer.
