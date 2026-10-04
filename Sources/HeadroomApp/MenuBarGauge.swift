@@ -10,6 +10,8 @@ struct MenuBarGauge: View {
         var label: String
         var fiveHour: Double
         var weekly: Double
+        /// Dimmed when the reading may be out of date.
+        var stale = false
     }
 
     let columns: [Column]
@@ -27,6 +29,7 @@ struct MenuBarGauge: View {
                         row(column.weekly)
                     }
                 }
+                .opacity(column.stale ? 0.45 : 1)
             }
         }
         .frame(height: 18)

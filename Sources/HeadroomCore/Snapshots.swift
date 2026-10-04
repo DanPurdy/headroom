@@ -15,6 +15,18 @@ public struct LimitWindow: Codable, Equatable, Sendable {
         now >= resetsAt ? 0 : usedPercentage
     }
 
+    /// The more recent of two readings. Within a window usage only rises, and a later window
+    /// resets later, so this never lets an old reading replace a newer one.
+    public static func newer(_ a: LimitWindow?, _ b: LimitWindow?) -> LimitWindow? {
+        guard let a else { return b }
+        guard let b else { return a }
+        // Same window if the reset times agree to within a minute.
+        if abs(a.resetsAt.timeIntervalSince(b.resetsAt)) < 60 {
+            return LimitWindow(usedPercentage: max(a.usedPercentage, b.usedPercentage), resetsAt: max(a.resetsAt, b.resetsAt))
+        }
+        return a.resetsAt > b.resetsAt ? a : b
+    }
+
     init?(_ window: StatusLineInput.Window?) {
         guard let pct = window?.usedPercentage, let resets = window?.resetsAt else { return nil }
         self.init(usedPercentage: pct, resetsAt: Date(timeIntervalSince1970: resets))
@@ -26,9 +38,14 @@ public struct AccountSnapshot: Codable, Equatable, Sendable {
     public var key: String
     public var label: String
     public var configDir: String
+    /// nil when no reading has been seen for that window.
     public var fiveHour: LimitWindow?
     public var sevenDay: LimitWindow?
+    /// When the freshest reading was measured (that session's last reply), not when we received it.
     public var updatedAt: Date
+
+    /// Readings older than this may miss usage from elsewhere, so the UI marks them.
+    public static let staleAfter: TimeInterval = 30 * 60
 
     public init(key: String, label: String, configDir: String,
                 fiveHour: LimitWindow?, sevenDay: LimitWindow?, updatedAt: Date) {
@@ -41,13 +58,25 @@ public struct AccountSnapshot: Codable, Equatable, Sendable {
     }
 
     /// `nil` when the input carries no `rate_limits` yet (before the session's first
-    /// API response, or not a Pro/Max login), so we keep the last good snapshot.
-    /// A window missing from a present `rate_limits` has reset, so it is stored as nil.
-    public static func from(_ input: StatusLineInput, label: String, configDir: String, now: Date) -> AccountSnapshot? {
+    /// API response, or not a Pro/Max login). `measuredAt` is when that session last replied.
+    public static func from(_ input: StatusLineInput, label: String, configDir: String, measuredAt: Date) -> AccountSnapshot? {
         guard let limits = input.rateLimits else { return nil }
         return AccountSnapshot(key: ConfigDir.key(for: configDir), label: label, configDir: configDir,
                                fiveHour: LimitWindow(limits.fiveHour), sevenDay: LimitWindow(limits.sevenDay),
-                               updatedAt: now)
+                               updatedAt: measuredAt)
+    }
+
+    /// Combines readings from any number of sessions, in any order, keeping the newest of each
+    /// window. A window missing from `incoming` tells us nothing, so the existing one stays.
+    public func merging(_ incoming: AccountSnapshot) -> AccountSnapshot {
+        AccountSnapshot(key: key, label: incoming.label, configDir: incoming.configDir,
+                        fiveHour: LimitWindow.newer(fiveHour, incoming.fiveHour),
+                        sevenDay: LimitWindow.newer(sevenDay, incoming.sevenDay),
+                        updatedAt: max(updatedAt, incoming.updatedAt))
+    }
+
+    public func isStale(at now: Date) -> Bool {
+        now.timeIntervalSince(updatedAt) > Self.staleAfter
     }
 }
 
@@ -73,11 +102,13 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     public var costUSD: Double?
     public var contextPercentage: Double?
     public var process: ProcessIdentity?
+    /// When the session last got a reply; nil if unknown.
+    public var lastReplyAt: Date?
     public var firstSeenAt: Date
     public var updatedAt: Date
 
     public init(sessionId: String, accountKey: String, name: String?, projectDir: String?, model: String?,
-                costUSD: Double?, contextPercentage: Double?, process: ProcessIdentity?,
+                costUSD: Double?, contextPercentage: Double?, process: ProcessIdentity?, lastReplyAt: Date? = nil,
                 firstSeenAt: Date, updatedAt: Date) {
         self.sessionId = sessionId
         self.accountKey = accountKey
@@ -87,12 +118,13 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         self.costUSD = costUSD
         self.contextPercentage = contextPercentage
         self.process = process
+        self.lastReplyAt = lastReplyAt
         self.firstSeenAt = firstSeenAt
         self.updatedAt = updatedAt
     }
 
     public static func from(_ input: StatusLineInput, configDir: String, process: ProcessIdentity?,
-                            previous: SessionSnapshot?, now: Date) -> SessionSnapshot? {
+                            lastReplyAt: Date? = nil, previous: SessionSnapshot?, now: Date) -> SessionSnapshot? {
         guard let id = input.sessionId, !id.isEmpty else { return nil }
         return SessionSnapshot(
             sessionId: id,
@@ -103,6 +135,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
             costUSD: input.cost?.totalCostUsd,
             contextPercentage: input.contextWindow?.usedPercentage,
             process: process ?? previous?.process,
+            lastReplyAt: lastReplyAt ?? previous?.lastReplyAt,
             firstSeenAt: previous?.firstSeenAt ?? now,
             updatedAt: now
         )

@@ -34,6 +34,7 @@ public struct StatusLineInput: Decodable, Sendable {
 
     public var sessionId: String?
     public var sessionName: String?
+    public var transcriptPath: String?
     public var cwd: String?
     public var workspace: Workspace?
     public var model: Model?

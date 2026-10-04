@@ -57,7 +57,7 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
 
     @Test func accountSnapshotFromRateLimits() throws {
         let input = try StatusLineInput.decode(Data(sampleInput.utf8))
-        let account = try #require(AccountSnapshot.from(input, label: "Work", configDir: "/Users/me/.claude", now: now))
+        let account = try #require(AccountSnapshot.from(input, label: "Work", configDir: "/Users/me/.claude", measuredAt: now))
         #expect(account.key == "Users-me-claude")
         #expect(account.fiveHour == LimitWindow(usedPercentage: 23.5, resetsAt: Date(timeIntervalSince1970: 1738425600)))
         #expect(account.sevenDay?.usedPercentage == 41.2)
@@ -65,14 +65,50 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
 
     @Test func noRateLimitsMeansKeepPreviousSnapshot() throws {
         let input = try StatusLineInput.decode(Data(#"{"session_id":"x"}"#.utf8))
-        #expect(AccountSnapshot.from(input, label: "Work", configDir: "/x", now: now) == nil)
+        #expect(AccountSnapshot.from(input, label: "Work", configDir: "/x", measuredAt: now) == nil)
     }
 
-    @Test func missingWindowInPresentLimitsHasReset() throws {
+    @Test func missingWindowIsNotReported() throws {
         let input = try StatusLineInput.decode(Data(#"{"rate_limits":{"seven_day":{"used_percentage":10,"resets_at":1738857600}}}"#.utf8))
-        let account = try #require(AccountSnapshot.from(input, label: "Work", configDir: "/x", now: now))
+        let account = try #require(AccountSnapshot.from(input, label: "Work", configDir: "/x", measuredAt: now))
         #expect(account.fiveHour == nil)
         #expect(account.sevenDay != nil)
+    }
+
+    @Test func newerReadingWins() {
+        let early = Date(timeIntervalSince1970: 1000)
+        let late = Date(timeIntervalSince1970: 1000 + 5 * 3600)
+        let old = LimitWindow(usedPercentage: 80, resetsAt: early)
+        let new = LimitWindow(usedPercentage: 5, resetsAt: late)
+        #expect(LimitWindow.newer(old, new) == new)
+        #expect(LimitWindow.newer(new, old) == new)
+        // Same window (reset times within a minute): usage only rises.
+        let sameWindowLower = LimitWindow(usedPercentage: 3, resetsAt: late.addingTimeInterval(1))
+        #expect(LimitWindow.newer(new, sameWindowLower)?.usedPercentage == 5)
+        #expect(LimitWindow.newer(nil, new) == new)
+        #expect(LimitWindow.newer(new, nil) == new)
+    }
+
+    @Test func staleSessionCannotRegressAccount() {
+        let resets = Date(timeIntervalSince1970: 2_000_000)
+        let fresh = AccountSnapshot(key: "k", label: "Main", configDir: "/x",
+                                    fiveHour: LimitWindow(usedPercentage: 13, resetsAt: resets),
+                                    sevenDay: LimitWindow(usedPercentage: 44, resetsAt: resets.addingTimeInterval(86400)),
+                                    updatedAt: now)
+        // An idle session re-running its status line with yesterday's figures.
+        let stale = AccountSnapshot(key: "k", label: "Main", configDir: "/x",
+                                    fiveHour: nil,
+                                    sevenDay: LimitWindow(usedPercentage: 34, resetsAt: resets.addingTimeInterval(86400)),
+                                    updatedAt: now.addingTimeInterval(-86400))
+        #expect(fresh.merging(stale) == fresh)
+        // And in the other order, the fresh reading still ends up on top.
+        #expect(stale.merging(fresh) == fresh)
+    }
+
+    @Test func staleness() {
+        let account = AccountSnapshot(key: "k", label: "Main", configDir: "/x", fiveHour: nil, sevenDay: nil, updatedAt: now)
+        #expect(!account.isStale(at: now.addingTimeInterval(29 * 60)))
+        #expect(account.isStale(at: now.addingTimeInterval(31 * 60)))
     }
 
     @Test func usageDropsToZeroAfterReset() {
@@ -105,6 +141,24 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         #expect(store.accounts().first?.updatedAt == now)
         #expect(store.sessions().map(\.sessionId) == ["abc-123"])
         #expect(store.sessions().first?.accountKey == "Users-me-claude-work")
+    }
+
+    @Test func recorderDatesReadingsByLastReply() throws {
+        let store = SnapshotStore(paths: tempPaths())
+        let now = Date(timeIntervalSince1970: 1738420000)
+        let lastReply = now.addingTimeInterval(-86400)
+        let transcript = FileManager.default.temporaryDirectory.appendingPathComponent("t-\(UUID().uuidString).jsonl")
+        try """
+        {"type":"assistant","timestamp":"\(ISO8601DateFormatter().string(from: lastReply))"}
+        {"type":"system","subtype":"away_summary","timestamp":"2026-10-04T16:47:45Z"}
+
+        """.write(to: transcript, atomically: true, encoding: .utf8)
+        var input = try JSONSerialization.jsonObject(with: Data(sampleInput.utf8)) as! [String: Any]
+        input["transcript_path"] = transcript.path
+        try StatusLineRecorder(store: store).record(JSONSerialization.data(withJSONObject: input), configDir: "/x",
+                                                    label: "Work", process: nil, now: now)
+        #expect(store.accounts().first?.updatedAt == lastReply)
+        #expect(store.sessions().first?.lastReplyAt == lastReply)
     }
 
     @Test func pruneRemovesOnlyOldSessions() throws {
@@ -214,6 +268,78 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
 
     @Test func shellQuoting() {
         #expect(Installer.shellQuote("it's") == #"'it'\''s'"#)
+    }
+}
+
+@Suite struct Transcripts {
+    func write(_ text: String) throws -> String {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("t-\(UUID().uuidString).jsonl")
+        try text.write(to: url, atomically: true, encoding: .utf8)
+        return url.path
+    }
+
+    @Test func findsLastAssistantEntry() throws {
+        let path = try write("""
+        {"type":"assistant","timestamp":"2026-10-03T09:40:00.000Z"}
+        {"type":"assistant","timestamp":"2026-10-03T09:46:18.566Z"}
+        {"type":"user","timestamp":"2026-10-03T09:47:00.000Z","message":{"content":"the \\"assistant\\" said"}}
+        {"type":"system","subtype":"away_summary","timestamp":"2026-10-03T09:49:21.796Z"}
+
+        """)
+        let date = try #require(Transcript.lastReplyDate(at: path))
+        #expect(abs(date.timeIntervalSince1970 - 1791020778.566) < 0.01)
+    }
+
+    @Test func handlesTailStartingMidLine() throws {
+        let filler = String(repeating: "x", count: 500)
+        let path = try write("""
+        {"type":"assistant","timestamp":"2026-10-03T09:00:00Z","pad":"\(filler)"}
+        {"type":"assistant","timestamp":"2026-10-03T10:00:00Z"}
+
+        """)
+        #expect(Transcript.lastReplyDate(at: path, tailBytes: 100) == ISO8601DateFormatter().date(from: "2026-10-03T10:00:00Z"))
+    }
+
+    @Test func missingFileOrNoReply() throws {
+        #expect(Transcript.lastReplyDate(at: "/nonexistent/x.jsonl") == nil)
+        #expect(Transcript.lastReplyDate(at: try write(#"{"type":"user","timestamp":"2026-10-03T09:00:00Z"}"#)) == nil)
+    }
+}
+
+@Suite struct LiveUsage {
+    @Test func parsesUsageResponse() throws {
+        let usage = try UsageAPI.parseUsage(Data("""
+        {"five_hour":{"utilization":13.0,"resets_at":"2026-10-04T18:30:00.123456+00:00"},
+         "seven_day":{"utilization":44.0,"resets_at":"2026-10-05T14:00:00+00:00"},
+         "seven_day_opus":null,"limits":[{"group":"x","percent":0}]}
+        """.utf8))
+        #expect(usage.fiveHour == LimitWindow(usedPercentage: 13, resetsAt: ISO8601DateFormatter().date(from: "2026-10-04T18:30:00Z")!))
+        #expect(usage.sevenDay?.usedPercentage == 44)
+    }
+
+    @Test func windowWithoutResetIsNotOpen() throws {
+        let usage = try UsageAPI.parseUsage(Data(#"{"five_hour":{"utilization":0,"resets_at":null},"seven_day":null}"#.utf8))
+        #expect(usage.fiveHour == nil)
+        #expect(usage.sevenDay == nil)
+    }
+
+    @Test func parsesCredentials() {
+        let creds = UsageAPI.parseCredentials(Data(#"{"claudeAiOauth":{"accessToken":"t","refreshToken":"r","expiresAt":1791142200000,"subscriptionType":"max"}}"#.utf8))
+        #expect(creds == UsageAPI.Credentials(accessToken: "t", expiresAt: Date(timeIntervalSince1970: 1791142200), subscriptionType: "max"))
+        #expect(UsageAPI.parseCredentials(Data("{}".utf8)) == nil)
+    }
+
+    @Test func keychainServiceCandidates() {
+        let custom = UsageAPI.keychainServices(configDir: "/Users/me/.claude-work")
+        #expect(custom.count == 2)
+        #expect(custom.allSatisfy { $0.hasPrefix("Claude Code-credentials-") && $0.count == "Claude Code-credentials-".count + 8 })
+        #expect(UsageAPI.keychainServices(configDir: ConfigDir.defaultPath).first == "Claude Code-credentials")
+    }
+
+    @Test func retryAfter() {
+        #expect(UsageAPI.retryAfter("120") == 120)
+        #expect(UsageAPI.retryAfter(nil) == nil)
+        #expect(UsageAPI.retryAfter("Wed, 21 Oct 2015 07:28:00 GMT") == nil)
     }
 }
 

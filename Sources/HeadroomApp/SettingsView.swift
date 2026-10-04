@@ -21,7 +21,7 @@ struct SettingsPage: View {
             if let error = model.lastError {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
-            Text("Each folder is one Claude login. Install wraps its status line so Headroom can record usage. Your status line keeps working, and Remove puts it back.")
+            Text("Each folder is one Claude login. Install wraps its status line so Headroom records usage after every Claude Code reply. Your status line keeps working, and Remove puts it back.\n\nLive also checks usage hourly and on ⟳, catching use from claude.ai, the desktop app and other devices. It reads Claude Code's saved login from your Keychain (read-only; macOS asks first) and calls Anthropic's undocumented usage endpoint.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -73,13 +73,26 @@ struct SetupRowView: View {
                     .labelsHidden()
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 150)
+                    .onSubmit(saveLabel)
+                    .help("Name shown for this account. Press Return to save.")
                 Spacer()
                 actions
             }
             .controlSize(.small)
+            Toggle("Live usage", isOn: Binding(get: { row.liveEnabled },
+                                               set: { model.setLive(configDir: row.configDir, enabled: $0) }))
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .font(.caption)
         }
         .padding(10)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func saveLabel() {
+        if case .installed(let current) = row.state, current != label {
+            model.install(configDir: row.configDir, label: label)
+        }
     }
 
     @ViewBuilder private var status: some View {
@@ -98,8 +111,6 @@ struct SetupRowView: View {
         switch row.state {
         case .notInstalled:
             Button("Install") { model.install(configDir: row.configDir, label: label) }
-                .buttonStyle(.borderedProminent)
-                .tint(.orange)
         case .installed(let current):
             if current != label {
                 Button("Rename") { model.install(configDir: row.configDir, label: label) }

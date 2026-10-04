@@ -54,7 +54,7 @@ struct UsageView: View {
                     }
                 }
                 ForEach(model.accounts) { row in
-                    AccountCard(row: row, now: context.date)
+                    AccountCard(row: row, now: context.date) { model.refreshLive(configDir: row.configDir) }
                 }
 
                 if let error = model.lastError {
@@ -98,22 +98,51 @@ struct HeaderGlyph: View {
 struct AccountCard: View {
     let row: AccountRow
     let now: Date
+    let refresh: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(row.label).font(.headline)
+                if let plan = row.live?.plan {
+                    Text(plan.capitalized)
+                        .font(.caption2.weight(.medium))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(.quaternary, in: Capsule())
+                }
                 Spacer()
                 if let snapshot = row.snapshot {
-                    Text("updated \(Formatting.age(of: snapshot.updatedAt, at: now))")
+                    Text(row.isStale ? "as of \(Formatting.age(of: snapshot.updatedAt, at: now))"
+                                     : "updated \(Formatting.age(of: snapshot.updatedAt, at: now))")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(row.isStale ? Color.orange : Color.secondary)
+                        .help(row.isStale
+                              ? "Out of date. Usage from claude.ai, the desktop app or other devices shows up after this account's next Claude Code reply\(row.live == nil ? ", or turn on Live in Settings" : "")."
+                              : "")
+                }
+                if let live = row.live {
+                    if live.refreshing {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Button(action: refresh) { Image(systemName: "arrow.clockwise") }
+                            .buttonStyle(.borderless)
+                            .font(.caption)
+                            .help("Check usage now")
+                    }
                 }
             }
 
+            if let error = row.live?.error {
+                Text(error).font(.caption).foregroundStyle(.orange)
+            }
+
             if let snapshot = row.snapshot {
-                LimitBar(title: "5-hour", window: snapshot.fiveHour, now: now)
-                LimitBar(title: "Weekly", window: snapshot.sevenDay, now: now)
+                Group {
+                    LimitBar(title: "5-hour", window: snapshot.fiveHour, now: now)
+                    LimitBar(title: "Weekly", window: snapshot.sevenDay, now: now)
+                }
+                .opacity(row.isStale ? 0.5 : 1)
             } else {
                 Text("Waiting for the first Claude Code reply on this account.")
                     .font(.caption)
@@ -121,7 +150,7 @@ struct AccountCard: View {
             }
 
             HStack {
-                Text("\(row.activeSessions.count) active session\(row.activeSessions.count == 1 ? "" : "s")")
+                Text("\(row.activeSessions.count) open session\(row.activeSessions.count == 1 ? "" : "s")")
                 Spacer()
                 Text("\(Formatting.usd(row.costToday)) today")
                     .help("API-equivalent cost of sessions active today, as estimated by Claude Code. Not what your plan bills.")
@@ -130,7 +159,7 @@ struct AccountCard: View {
             .foregroundStyle(.secondary)
 
             ForEach(row.activeSessions, id: \.sessionId) { session in
-                SessionLine(session: session)
+                SessionLine(session: session, now: now)
             }
         }
         .padding(10)
@@ -152,8 +181,10 @@ struct LimitBar: View {
                 if let window, window.resetsAt > now {
                     Text("\(Formatting.percent(used)) · resets in \(Formatting.countdown(until: window.resetsAt, from: now))")
                         .monospacedDigit()
-                } else {
+                } else if window != nil {
                     Text("0% · reset").foregroundStyle(.secondary)
+                } else {
+                    Text("no data yet").foregroundStyle(.secondary)
                 }
             }
             .font(.caption)
@@ -173,10 +204,16 @@ struct LimitBar: View {
 
 struct SessionLine: View {
     let session: SessionSnapshot
+    let now: Date
+
+    private var idle: Bool {
+        session.lastReplyAt.map { now.timeIntervalSince($0) > UsageModel.idleAfter } ?? true
+    }
 
     var body: some View {
         HStack(spacing: 6) {
-            Circle().fill(.green).frame(width: 6, height: 6)
+            Circle().fill(idle ? Color.secondary : Color.green).frame(width: 6, height: 6)
+                .help(session.lastReplyAt.map { "Last reply \(Formatting.age(of: $0, at: now))" } ?? "No reply seen yet")
             Text(session.name ?? session.projectDir.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "session")
                 .lineLimit(1)
                 .truncationMode(.tail)
