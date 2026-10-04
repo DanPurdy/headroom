@@ -7,12 +7,12 @@
 set -euo pipefail
 
 bundle_id=io.github.danpurdy.headroom
+tmp="" # global, not local to main: the EXIT trap runs after main has returned
 
 # Everything runs from main, which is only called on the last line: if a `curl | bash`
 # download is cut short, nothing runs at all rather than half the script.
 main() {
   local repo="${HEADROOM_REPO:-DanPurdy/headroom}"
-  local tmp
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT
 
