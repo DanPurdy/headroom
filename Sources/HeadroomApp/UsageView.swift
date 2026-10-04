@@ -3,58 +3,68 @@ import SwiftUI
 
 struct UsageView: View {
     let model: UsageModel
-    @State private var showSetup = false
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         // Ticks only while the panel is open, to keep countdowns current.
         TimelineView(.everyMinute) { context in
             VStack(alignment: .leading, spacing: 12) {
+                header
+
                 if model.accounts.isEmpty {
-                    Text("No accounts set up yet. Open Claude Code setup below, then send a message in Claude Code.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("No Claude Code accounts connected yet. Connect them in Settings, then send a message in Claude Code.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Button("Open Settings…", action: showSettings)
+                    }
                 }
                 ForEach(model.accounts) { row in
                     AccountCard(row: row, now: context.date)
-                }
-
-                Divider()
-
-                // Stays open while any Claude Code folder still needs connecting.
-                DisclosureGroup(isExpanded: Binding(get: { showSetup || model.needsSetup }, set: { showSetup = $0 })) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(model.setupRows) { row in
-                            SetupRowView(row: row, model: model)
-                        }
-                    }
-                    .padding(.top, 6)
-                } label: {
-                    let pending = model.setupRows.filter { !$0.isConnected }.count
-                    HStack {
-                        Text("Claude Code setup")
-                        Spacer()
-                        Text(pending == 0 ? "All connected" : "\(pending) to connect")
-                            .font(.caption)
-                            .foregroundStyle(pending == 0 ? Color.secondary : Color.orange)
-                    }
                 }
 
                 if let error = model.lastError {
                     Text(error).font(.caption).foregroundStyle(.red)
                 }
 
+                Divider()
+
                 HStack {
-                    Toggle("Launch at login", isOn: Binding(get: { model.launchAtLogin },
-                                                            set: { model.setLaunchAtLogin($0) }))
-                        .toggleStyle(.checkbox)
+                    let pending = model.setupRows.filter { !$0.isConnected }.count
+                    if pending > 0, !model.accounts.isEmpty {
+                        Button("\(pending) Claude folder\(pending == 1 ? "" : "s") not connected", action: showSettings)
+                            .buttonStyle(.link)
+                            .foregroundStyle(.orange)
+                    }
                     Spacer()
-                    Button("Quit") { NSApplication.shared.terminate(nil) }
+                    Button("Quit Headroom") { NSApplication.shared.terminate(nil) }
                 }
                 .font(.callout)
             }
             .padding(14)
             .frame(width: 340)
         }
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Image(nsImage: NSApplication.shared.applicationIconImage)
+                .resizable()
+                .frame(width: 24, height: 24)
+            Text("Headroom").font(.headline)
+            Spacer()
+            Button(action: showSettings) {
+                Image(systemName: "gearshape")
+            }
+            .buttonStyle(.borderless)
+            .help("Settings")
+        }
+    }
+
+    /// A menu bar app is never frontmost, so bring the settings window forward explicitly.
+    private func showSettings() {
+        openSettings()
+        NSApplication.shared.activate()
     }
 }
 
@@ -144,48 +154,5 @@ struct SessionLine: View {
         }
         .font(.caption)
         .help(session.projectDir ?? "")
-    }
-}
-
-struct SetupRowView: View {
-    let row: SetupRow
-    let model: UsageModel
-    @State private var label: String
-
-    init(row: SetupRow, model: UsageModel) {
-        self.row = row
-        self.model = model
-        _label = State(initialValue: row.label)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(row.configDir.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
-                .font(.caption.monospaced())
-            HStack {
-                TextField("Label", text: $label)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 140)
-                switch row.state {
-                case .notInstalled:
-                    Button("Install") { model.install(configDir: row.configDir, label: label) }
-                case .installed(let current):
-                    if current != label {
-                        Button("Rename") { model.install(configDir: row.configDir, label: label) }
-                    } else {
-                        Label("Installed", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                    }
-                    Spacer()
-                    Button("Remove") { model.uninstall(configDir: row.configDir) }
-                case .stale:
-                    Button("Repair") { model.install(configDir: row.configDir, label: label) }
-                        .help("Installed, but pointing at an older copy of Headroom.")
-                    Spacer()
-                    Button("Remove") { model.uninstall(configDir: row.configDir) }
-                }
-            }
-            .controlSize(.small)
-        }
     }
 }

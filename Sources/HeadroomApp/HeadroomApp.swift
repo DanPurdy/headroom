@@ -16,5 +16,9 @@ struct HeadroomApp: App {
             }
         }
         .menuBarExtraStyle(.window)
+
+        Settings {
+            SettingsView(model: model)
+        }
     }
 }

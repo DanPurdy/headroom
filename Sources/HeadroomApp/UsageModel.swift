@@ -81,10 +81,6 @@ final class UsageModel {
         }.joined(separator: "; ")
     }
 
-    var needsSetup: Bool {
-        setupRows.contains { !$0.isConnected }
-    }
-
     func install(configDir: String, label: String) {
         let trimmed = label.trimmingCharacters(in: .whitespaces)
         perform { try installer.install(configDir: configDir, label: trimmed.isEmpty ? ConfigDir.defaultLabel(for: configDir) : trimmed, binary: cli) }
