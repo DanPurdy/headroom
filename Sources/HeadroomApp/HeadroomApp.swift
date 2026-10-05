@@ -63,10 +63,12 @@ final class StatusPanel: NSObject {
         // Built on each open and dropped on close, so nothing (e.g. countdown timers) runs while hidden.
         let root = UsageView(model: model)
             .fixedSize()
+            .ignoresSafeArea() // the hidden titlebar would otherwise take space from the content
             .onGeometryChange(for: CGSize.self, of: \.size) { [weak self] size in self?.resize(to: size) }
         let hosting = NSHostingView(rootView: root)
         // Reports its size but adds no window constraints: the panel follows the content.
         hosting.sizingOptions = [.intrinsicContentSize]
+        hosting.safeAreaRegions = []
 
         let background = NSVisualEffectView()
         background.material = .menu

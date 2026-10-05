@@ -160,12 +160,12 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
     }
 
     @Test func unchangedCostAddsNoSample() throws {
-        #expect(try session([2, 2, 2]).costSamples?.count == 1)
+        #expect(try session([2, 2, 2]).samples?.count == 1)
     }
 
     @Test func oldSamplesArePrunedButKeepABaseline() throws {
         let s = try session(Array(stride(from: 1.0, through: 30, by: 1))) // 30 hourly replies
-        #expect(s.costSamples?.count == 26) // from the baseline at the 25h cutoff to now
+        #expect(s.samples?.count == 26) // from the baseline at the 25h cutoff to now
         #expect(s.cost(since: now.addingTimeInterval(-24.5 * 3600)) == 25)
     }
 
@@ -178,6 +178,60 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
                                                         lastReplyAt: now, previous: legacy, now: now))
         #expect(updated.cost(since: now.addingTimeInterval(-30 * 60)) == 2)
         #expect(legacy.cost(since: now.addingTimeInterval(-2 * 3600)) == 10)
+    }
+
+    @Test func samplesRecordEachReplysLimits() throws {
+        let s = try #require(SessionSnapshot.from(try StatusLineInput.decode(Data(sampleInput.utf8)), configDir: "/x",
+                                                  process: nil, lastReplyAt: now, previous: nil, now: now))
+        #expect(s.samples?.last?.fiveHour?.usedPercentage == 23.5)
+        #expect(s.samples?.last?.sevenDay?.usedPercentage == 41.2)
+    }
+}
+
+@Suite struct Attribution {
+    let now = Date(timeIntervalSince1970: 1738420000)
+    var resets: Date { now.addingTimeInterval(3600) }
+
+    /// A session whose replies, `minutes` before now, reported these 5-hour and weekly percentages.
+    func session(_ id: String, account: String = "a", _ replies: [(minutes: Double, fiveHour: Double, weekly: Double)],
+                 fiveHourResets: Date? = nil) -> SessionSnapshot {
+        SessionSnapshot(sessionId: id, accountKey: account, name: nil, projectDir: nil, model: nil, costUSD: nil,
+                        contextPercentage: nil, process: nil, firstSeenAt: now, updatedAt: now,
+                        samples: replies.map {
+                            UsageSample(at: now.addingTimeInterval(-$0.minutes * 60), usd: nil,
+                                        fiveHour: LimitWindow(usedPercentage: $0.fiveHour, resetsAt: fiveHourResets ?? resets),
+                                        sevenDay: LimitWindow(usedPercentage: $0.weekly, resetsAt: resets.addingTimeInterval(86400)))
+                        })
+    }
+
+    @Test func eachRiseGoesToTheSessionThatReportedIt() {
+        let a = session("A", [(50, 10, 40), (10, 15, 42)])
+        let b = session("B", [(30, 12, 41)])
+        let use = LimitAttribution.use(of: [a, b], since: now.addingTimeInterval(-3600))
+        #expect(use["A"] == LimitUse(fiveHour: 3, sevenDay: 1)) // its first reply is the baseline
+        #expect(use["B"] == LimitUse(fiveHour: 2, sevenDay: 1))
+    }
+
+    @Test func onlyRepliesInThePeriodCountButEarlierOnesAreTheBaseline() {
+        let a = session("A", [(120, 10, 40), (20, 14, 41)])
+        let use = LimitAttribution.use(of: [a], since: now.addingTimeInterval(-3600))
+        #expect(use["A"] == LimitUse(fiveHour: 4, sevenDay: 1))
+    }
+
+    @Test func newWindowStartsFromZeroAndOldReadingsCountForNothing() {
+        let before = session("A", [(300, 80, 40)], fiveHourResets: now.addingTimeInterval(-60))
+        let after = session("B", [(20, 5, 41)])
+        let stale = session("C", [(10, 70, 41)], fiveHourResets: now.addingTimeInterval(-60))
+        let use = LimitAttribution.use(of: [before, after, stale], since: now.addingTimeInterval(-3600))
+        #expect(use["B"]?.fiveHour == 5)
+        #expect(use["C"]?.fiveHour == 0)
+    }
+
+    @Test func accountsAreSeparate() {
+        let a = session("A", account: "work", [(50, 10, 40)])
+        let b = session("B", account: "home", [(30, 50, 60)])
+        let use = LimitAttribution.use(of: [a, b], since: now.addingTimeInterval(-3600))
+        #expect(use["B"] == LimitUse()) // first reading on its account, nothing to compare with
     }
 }
 

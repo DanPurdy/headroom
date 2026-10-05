@@ -106,12 +106,13 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     public var lastReplyAt: Date?
     public var firstSeenAt: Date
     public var updatedAt: Date
-    /// `costUSD` over time, for spend within a period. nil in files from before it existed.
-    public var costSamples: [CostSample]?
+    /// Cost and plan usage as of each reply, for what the session used within a period.
+    /// nil in files from before it existed.
+    public var samples: [UsageSample]?
 
     public init(sessionId: String, accountKey: String, name: String?, projectDir: String?, model: String?,
                 costUSD: Double?, contextPercentage: Double?, process: ProcessIdentity?, lastReplyAt: Date? = nil,
-                firstSeenAt: Date, updatedAt: Date, costSamples: [CostSample]? = nil) {
+                firstSeenAt: Date, updatedAt: Date, samples: [UsageSample]? = nil) {
         self.sessionId = sessionId
         self.accountKey = accountKey
         self.name = name
@@ -123,36 +124,40 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         self.lastReplyAt = lastReplyAt
         self.firstSeenAt = firstSeenAt
         self.updatedAt = updatedAt
-        self.costSamples = costSamples
+        self.samples = samples
     }
 
     /// How far back samples are kept; longer than any period the app shows.
     public static let costHistory: TimeInterval = 25 * 3600
 
-    /// Estimated spend in this session after `start`, from the cost samples.
+    /// Estimated spend in this session after `start`, from the samples.
     public func cost(since start: Date) -> Double {
-        let samples = costSamples ?? costUSD.map { [CostSample(at: lastReplyAt ?? updatedAt, usd: $0)] } ?? []
+        let samples = samples ?? costUSD.map { [UsageSample(at: lastReplyAt ?? updatedAt, usd: $0)] } ?? []
         var total = 0.0
         var previous: Double?
         for sample in samples {
+            guard let usd = sample.usd else { continue }
             // Claude Code's total restarts from zero when a session is resumed in a new process.
-            let spent = previous.map { sample.usd >= $0 ? sample.usd - $0 : sample.usd } ?? sample.usd
+            let spent = previous.map { usd >= $0 ? usd - $0 : usd } ?? usd
             if sample.at > start { total += spent }
-            previous = sample.usd
+            previous = usd
         }
         return total
     }
 
-    /// Samples with `usd` appended if the total changed, dropping those older than
-    /// `costHistory` except the newest of them, which the next sample's spend is measured from.
-    static func samples(_ previous: SessionSnapshot?, adding usd: Double?, at time: Date, now: Date) -> [CostSample]? {
-        var samples = previous?.costSamples ?? []
+    /// Samples with `latest` appended if anything changed, dropping those older than
+    /// `costHistory` except the newest of them, which the next sample is measured from.
+    static func samples(_ previous: SessionSnapshot?, adding latest: UsageSample, now: Date) -> [UsageSample]? {
+        var samples = previous?.samples ?? []
         if samples.isEmpty, let previous, let old = previous.costUSD {
             // A session recorded before samples existed: what it had spent then isn't new spend.
-            samples = [CostSample(at: previous.lastReplyAt ?? previous.updatedAt, usd: old)]
+            samples = [UsageSample(at: previous.lastReplyAt ?? previous.updatedAt, usd: old)]
         }
-        if let usd, usd != samples.last?.usd {
-            samples.append(CostSample(at: max(time, samples.last?.at ?? time), usd: usd))
+        if latest.usd != nil || latest.fiveHour != nil || latest.sevenDay != nil,
+           !(samples.last?.sameReading(as: latest) ?? false) {
+            var latest = latest
+            latest.at = max(latest.at, samples.last?.at ?? latest.at)
+            samples.append(latest)
         }
         let cutoff = now.addingTimeInterval(-costHistory)
         if let anchor = samples.lastIndex(where: { $0.at <= cutoff }) {
@@ -176,18 +181,80 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
             lastReplyAt: lastReplyAt ?? previous?.lastReplyAt,
             firstSeenAt: previous?.firstSeenAt ?? now,
             updatedAt: now,
-            costSamples: samples(previous, adding: input.cost?.totalCostUsd, at: lastReplyAt ?? now, now: now)
+            samples: samples(previous, adding: UsageSample(at: lastReplyAt ?? now, usd: input.cost?.totalCostUsd,
+                                                           fiveHour: LimitWindow(input.rateLimits?.fiveHour),
+                                                           sevenDay: LimitWindow(input.rateLimits?.sevenDay)),
+                             now: now)
         )
     }
 }
 
-/// Claude Code's running cost estimate for a session at one moment.
-public struct CostSample: Codable, Equatable, Sendable {
+/// A session's figures as of one reply: Claude Code's running cost estimate, and the account's
+/// plan usage that reply's response reported.
+public struct UsageSample: Codable, Equatable, Sendable {
     public var at: Date
-    public var usd: Double
+    public var usd: Double?
+    public var fiveHour: LimitWindow?
+    public var sevenDay: LimitWindow?
 
-    public init(at: Date, usd: Double) {
+    public init(at: Date, usd: Double?, fiveHour: LimitWindow? = nil, sevenDay: LimitWindow? = nil) {
         self.at = at
         self.usd = usd
+        self.fiveHour = fiveHour
+        self.sevenDay = sevenDay
+    }
+
+    func sameReading(as other: UsageSample) -> Bool {
+        usd == other.usd && fiveHour == other.fiveHour && sevenDay == other.sevenDay
+    }
+}
+
+/// How much of each plan limit a session used, in percentage points.
+public struct LimitUse: Equatable, Sendable {
+    public var fiveHour: Double = 0
+    public var sevenDay: Double = 0
+
+    public init(fiveHour: Double = 0, sevenDay: Double = 0) {
+        self.fiveHour = fiveHour
+        self.sevenDay = sevenDay
+    }
+}
+
+public enum LimitAttribution {
+    /// Each rise in an account's usage is credited to the session whose reply reported it:
+    /// the replies of all an account's sessions, in time order, each compared with the reading
+    /// before it. Counts replies after `start`; result keyed by session ID.
+    ///
+    /// Use from elsewhere (claude.ai, other devices) lands on the next Claude Code reply, and
+    /// the first reading Headroom ever sees for an account has nothing to compare with.
+    public static func use(of sessions: [SessionSnapshot], since start: Date) -> [String: LimitUse] {
+        var result: [String: LimitUse] = [:]
+        for account in Dictionary(grouping: sessions, by: \.accountKey).values {
+            let replies = account
+                .flatMap { session in (session.samples ?? []).map { (id: session.sessionId, sample: $0) } }
+                .sorted { $0.sample.at < $1.sample.at }
+            var fiveHour: LimitWindow?
+            var sevenDay: LimitWindow?
+            for (id, sample) in replies {
+                let fiveHourRise = rise(sample.fiveHour, after: &fiveHour)
+                let sevenDayRise = rise(sample.sevenDay, after: &sevenDay)
+                guard sample.at > start else { continue }
+                result[id, default: LimitUse()].fiveHour += fiveHourRise
+                result[id, default: LimitUse()].sevenDay += sevenDayRise
+            }
+        }
+        return result
+    }
+
+    /// The rise from `last` to `reading`, updating `last` to the newest reading.
+    static func rise(_ reading: LimitWindow?, after last: inout LimitWindow?) -> Double {
+        guard let reading else { return 0 }
+        defer { last = LimitWindow.newer(last, reading) }
+        guard let previous = last else { return 0 } // nothing to compare with
+        if abs(reading.resetsAt.timeIntervalSince(previous.resetsAt)) < 60 {
+            return max(0, reading.usedPercentage - previous.usedPercentage)
+        }
+        // A new window starts from zero; a reading from an older one is out of date.
+        return reading.resetsAt > previous.resetsAt ? reading.usedPercentage : 0
     }
 }
