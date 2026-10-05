@@ -132,14 +132,15 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
 
     /// Estimated spend in this session after `start`, from the samples.
     public func cost(since start: Date) -> Double {
-        let samples = samples ?? costUSD.map { [UsageSample(at: lastReplyAt ?? updatedAt, usd: $0)] } ?? []
+        // A session not sampled yet: what it spent before Headroom began sampling is unknown.
+        let samples = samples ?? costUSD.map { [UsageSample(at: lastReplyAt ?? updatedAt, usd: $0, baseline: true)] } ?? []
         var total = 0.0
         var previous: Double?
         for sample in samples {
             guard let usd = sample.usd else { continue }
             // Claude Code's total restarts from zero when a session is resumed in a new process.
             let spent = previous.map { usd >= $0 ? usd - $0 : usd } ?? usd
-            if sample.at > start { total += spent }
+            if sample.at > start, sample.baseline != true { total += spent }
             previous = usd
         }
         return total
@@ -151,7 +152,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         var samples = previous?.samples ?? []
         if samples.isEmpty, let previous, let old = previous.costUSD {
             // A session recorded before samples existed: what it had spent then isn't new spend.
-            samples = [UsageSample(at: previous.lastReplyAt ?? previous.updatedAt, usd: old)]
+            samples = [UsageSample(at: previous.lastReplyAt ?? previous.updatedAt, usd: old, baseline: true)]
         }
         if latest.usd != nil || latest.fiveHour != nil || latest.sevenDay != nil,
            !(samples.last?.sameReading(as: latest) ?? false) {
@@ -196,12 +197,16 @@ public struct UsageSample: Codable, Equatable, Sendable {
     public var usd: Double?
     public var fiveHour: LimitWindow?
     public var sevenDay: LimitWindow?
+    /// The total a session had already spent when sampling began: measured from, never counted.
+    public var baseline: Bool?
 
-    public init(at: Date, usd: Double?, fiveHour: LimitWindow? = nil, sevenDay: LimitWindow? = nil) {
+    public init(at: Date, usd: Double?, fiveHour: LimitWindow? = nil, sevenDay: LimitWindow? = nil,
+                baseline: Bool? = nil) {
         self.at = at
         self.usd = usd
         self.fiveHour = fiveHour
         self.sevenDay = sevenDay
+        self.baseline = baseline
     }
 
     func sameReading(as other: UsageSample) -> Bool {

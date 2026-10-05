@@ -177,7 +177,9 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         let updated = try #require(SessionSnapshot.from(try input(cost: 12), configDir: "/x", process: nil,
                                                         lastReplyAt: now, previous: legacy, now: now))
         #expect(updated.cost(since: now.addingTimeInterval(-30 * 60)) == 2)
-        #expect(legacy.cost(since: now.addingTimeInterval(-2 * 3600)) == 10)
+        // Even when its last reply falls inside the period, the old total isn't new spend.
+        #expect(updated.cost(since: now.addingTimeInterval(-2 * 3600)) == 2)
+        #expect(legacy.cost(since: now.addingTimeInterval(-2 * 3600)) == 0)
     }
 
     @Test func samplesRecordEachReplysLimits() throws {
