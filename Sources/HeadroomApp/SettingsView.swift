@@ -11,31 +11,26 @@ struct SettingsPage: View {
                 .font(.subheadline.weight(.semibold))
 
             if model.isTranslocated {
-                Text("Move Headroom to your Applications folder and open it from there before installing.")
+                Text("Move Headroom to Applications to install.")
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             if model.setupRows.isEmpty {
-                Text("No Claude Code folders found in your home folder. Headroom needs Claude Code on this Mac: install it and log in, or add your folder if it lives somewhere else.")
+                Text("No Claude Code folders found")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
             ForEach(model.setupRows) { row in
                 SetupRowView(row: row, model: model)
             }
             Button("Add folder…", action: chooseFolder)
                 .controlSize(.small)
-                .help("Add a Claude Code config folder that isn't ~/.claude or ~/.claude-*")
+                .help("Add a Claude Code folder outside ~/.claude*")
             if let error = model.lastError {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
-            Text("Each folder is one Claude login. Install wraps its status line so Headroom records usage after every Claude Code reply. Your status line keeps working, and Remove puts it back.\n\nLive also checks usage hourly and on ⟳, catching use from claude.ai, the desktop app and other devices. It reads Claude Code's saved login from your Keychain only when you switch Live on or press ⟳ (read-only; macOS may ask, so choose Always Allow), keeps it in memory until it expires, and calls Anthropic's undocumented usage endpoint.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
 
             Divider()
 
@@ -103,19 +98,34 @@ struct SetupRowView: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 150)
                     .onSubmit(saveLabel)
-                    .help("Name shown for this account. Press Return to save.")
+                    .help("Press Return to save")
                 Spacer()
                 actions
             }
             .controlSize(.small)
-            Toggle("Live usage", isOn: Binding(get: { row.liveEnabled },
-                                               set: { model.setLive(configDir: row.configDir, enabled: $0) }))
+            Toggle("Live usage", isOn: Binding(get: { row.liveEnabled }, set: setLive))
                 .toggleStyle(.switch)
                 .controlSize(.mini)
                 .font(.caption)
+                .help("Also counts claude.ai, the desktop app and other devices")
         }
         .padding(10)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func setLive(_ enabled: Bool) {
+        if enabled, !confirmLive() { return }
+        model.setLive(configDir: row.configDir, enabled: enabled)
+    }
+
+    private func confirmLive() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Turn on Live usage?"
+        alert.informativeText = "Headroom will read this account's Claude Code login from your Keychain and use it to ask Anthropic for your usage, once an hour and when you press ⟳. This also counts claude.ai, the desktop app and other devices.\n\nThe login is never saved or sent anywhere else."
+        alert.addButton(withTitle: "Turn On")
+        alert.addButton(withTitle: "Cancel")
+        NSApplication.shared.activate()
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     private func saveLabel() {
@@ -132,7 +142,7 @@ struct SetupRowView: View {
             Label("Installed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
         case .stale:
             Text("Needs repair").foregroundStyle(.orange)
-                .help("Installed, but pointing at an older copy of Headroom.")
+                .help("Points at an older copy of Headroom")
         }
     }
 
@@ -144,11 +154,13 @@ struct SetupRowView: View {
                     .help("Remove this folder from Headroom's list")
             }
             Button("Install") { model.install(configDir: row.configDir, label: label) }
+                .help("Record usage after each Claude Code reply. Your status line keeps working.")
         case .installed(let current):
             if current != label {
                 Button("Rename") { model.install(configDir: row.configDir, label: label) }
             }
             Button("Remove") { model.uninstall(configDir: row.configDir) }
+                .help("Restore your original status line")
         case .stale:
             Button("Repair") { model.install(configDir: row.configDir, label: label) }
             Button("Remove") { model.uninstall(configDir: row.configDir) }

@@ -41,7 +41,7 @@ struct LiveState {
     var retryAt: Date?
     var error: String?
     var plan: String?
-    /// Waiting for the user to press ⟳, because the check needs the Keychain.
+    /// Waiting for ⟳, because the Keychain couldn't be read.
     var paused = false
 
     var nextDue: Date? {
@@ -78,7 +78,8 @@ final class UsageModel {
     static let sessionRetention: TimeInterval = 7 * 24 * 3600
     /// A session that hasn't replied for this long is shown as idle.
     static let idleAfter: TimeInterval = 15 * 60
-    private static let liveDefaultsKey = "liveConfigDirs"
+    /// Not "liveConfigDirs": that was agreed to before Live read the Keychain in the background.
+    private static let liveDefaultsKey = "liveConsentedConfigDirs"
     private static let addedDefaultsKey = "addedConfigDirs"
 
     @ObservationIgnored private var addedDirs: [String] = UserDefaults.standard.stringArray(forKey: UsageModel.addedDefaultsKey) ?? []
@@ -90,6 +91,7 @@ final class UsageModel {
         }
         store.pruneSessions(olderThan: Self.sessionRetention)
         store.pruneOutdatedAccountKeys()
+        UserDefaults.standard.removeObject(forKey: "liveConfigDirs")
         for dir in UserDefaults.standard.stringArray(forKey: Self.liveDefaultsKey) ?? [] {
             live[dir] = LiveState()
         }
@@ -162,15 +164,12 @@ final class UsageModel {
 
     func setLive(configDir: String, enabled: Bool) {
         live[configDir] = enabled ? LiveState() : nil
-        if !enabled { LiveFetcher.forget(configDir: configDir) }
         UserDefaults.standard.set(Array(live.keys).sorted(), forKey: Self.liveDefaultsKey)
         reload()
-        if enabled { refreshLive(configDir: configDir, interactive: true) }
+        if enabled { refreshLive(configDir: configDir) }
     }
 
-    /// `interactive` when the user asked (⟳ or switching Live on): only then may it read the
-    /// Keychain, which can show a macOS prompt.
-    func refreshLive(configDir: String, interactive: Bool) {
+    func refreshLive(configDir: String) {
         guard var state = live[configDir], !state.refreshing else { return }
         state.refreshing = true
         state.lastAttempt = Date()
@@ -180,7 +179,7 @@ final class UsageModel {
 
         Task.detached(priority: .utility) {
             let result: Swift.Result<LiveFetcher.Result, LiveFetcher.Failure>
-            do { result = .success(try await LiveFetcher.fetch(configDir: configDir, interactive: interactive)) } catch { result = .failure(error as? LiveFetcher.Failure ?? .unreadable) }
+            do { result = .success(try await LiveFetcher.fetch(configDir: configDir)) } catch { result = .failure(error as? LiveFetcher.Failure ?? .unreadable) }
             await MainActor.run { self.finishLive(configDir: configDir, result: result) }
         }
     }
@@ -202,7 +201,7 @@ final class UsageModel {
             try? store.write(merged) // the directory watcher reloads
         case .failure(let failure):
             state.error = failure.message
-            if case .needsAccess = failure { state.paused = true }
+            if case .keychain = failure { state.paused = true }
             if case .rateLimited(let retryAfter) = failure {
                 state.retryAt = Date().addingTimeInterval(max(retryAfter ?? 0, 5 * 60))
             }
@@ -214,7 +213,7 @@ final class UsageModel {
     private func runDueLiveChecks() {
         let now = Date()
         for (dir, state) in live where !state.paused && (state.nextDue.map { $0 <= now } ?? true) {
-            refreshLive(configDir: dir, interactive: false)
+            refreshLive(configDir: dir)
         }
     }
 

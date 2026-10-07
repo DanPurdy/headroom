@@ -60,15 +60,15 @@ struct UsageView: View {
         TimelineView(.everyMinute) { context in
             VStack(alignment: .leading, spacing: 12) {
                 if model.accounts.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("No Claude Code accounts connected yet. Connect them in Settings (or add your Claude Code folder there), then send a message in Claude Code.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                    HStack {
+                        Text("No accounts connected").foregroundStyle(.secondary)
+                        Spacer()
                         Button("Open Settings") { showingSettings = true }
                     }
+                    .font(.callout)
                 }
                 ForEach(model.accounts) { row in
-                    AccountCard(row: row, now: context.date) { model.refreshLive(configDir: row.configDir, interactive: true) }
+                    AccountCard(row: row, now: context.date) { model.refreshLive(configDir: row.configDir) }
                 }
 
                 if let error = model.lastError {
@@ -131,9 +131,7 @@ struct AccountCard: View {
                                      : "updated \(Formatting.age(of: snapshot.updatedAt, at: now))")
                         .font(.caption)
                         .foregroundStyle(row.isStale ? Color.orange : Color.secondary)
-                        .help(row.isStale
-                              ? "Out of date. Usage from claude.ai, the desktop app or other devices shows up after this account's next Claude Code reply\(row.live == nil ? ", or turn on Live in Settings" : "")."
-                              : "")
+                        .help(row.isStale ? "Updates on this account's next Claude Code reply" : "")
                 }
                 if let live = row.live {
                     if live.refreshing {
@@ -158,16 +156,17 @@ struct AccountCard: View {
                 }
                 .opacity(row.isStale ? 0.5 : 1)
             } else {
-                Text("Waiting for the first Claude Code reply on this account.")
+                Text("No usage yet")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .help("Send a message in Claude Code on this account")
             }
 
             HStack {
                 Text("\(row.activeSessions.count) open session\(row.activeSessions.count == 1 ? "" : "s")")
                 Spacer()
                 Text("\(Formatting.usd(row.costToday)) today")
-                    .help("API-equivalent cost of sessions active today, as estimated by Claude Code. Not what your plan bills.")
+                    .help("API-equivalent cost, estimated by Claude Code")
             }
             .font(.caption)
             .foregroundStyle(.secondary)

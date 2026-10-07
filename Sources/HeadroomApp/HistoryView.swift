@@ -20,7 +20,7 @@ struct HistoryPage: View {
                 .labelsHidden()
 
                 if entries.isEmpty {
-                    Text("No Claude Code replies in the last \(hours == 1 ? "hour" : "\(hours) hours").")
+                    Text("No replies in the last \(hours == 1 ? "hour" : "\(hours) hours").")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 } else {
@@ -36,11 +36,6 @@ struct HistoryPage: View {
                     .frame(maxHeight: 360)
                     .fixedSize(horizontal: false, vertical: true)
                 }
-
-                Text("Each rise in a limit counts towards the conversation whose reply reported it, so use from claude.ai or other devices lands on the next Claude Code reply. Costs are Claude Code's estimate at API prices.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -70,6 +65,7 @@ struct HistoryPage: View {
             }
         }
         .font(.callout)
+        .help("Use from claude.ai or other devices counts towards the next Claude Code reply. Costs are API-equivalent estimates.")
     }
 
     private func entries(since start: Date) -> [HistoryEntry] {
