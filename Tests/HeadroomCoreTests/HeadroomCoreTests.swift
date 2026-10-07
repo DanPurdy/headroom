@@ -12,7 +12,9 @@ let sampleInput = """
   "workspace": {"current_dir": "/work/app/src", "project_dir": "/work/app"},
   "cost": {"total_cost_usd": 1.25},
   "context_window": {"used_percentage": 8},
-  "prompt_cache": {"warm": true, "ttl": "1h", "expires_at": 1738429200, "recache_tokens_if_cold": 45000},
+  "prompt_cache": {"warm": true, "ttl": "1h", "expires_at": 1738429200, "recache_tokens_if_cold": 45000,
+                   "hit_ratio": 0.91, "misses": 2, "last_miss_at": 1738425230,
+                   "last_miss_cause": {"causes": ["tools_changed"], "tools_added": 2}},
   "rate_limits": {
     "five_hour": {"used_percentage": 23.5, "resets_at": 1738425600},
     "seven_day": {"used_percentage": 41.2, "resets_at": 1738857600}
@@ -209,9 +211,10 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
     }
 
     @Test func oldSamplesArePrunedButKeepABaseline() throws {
-        let s = try session(Array(stride(from: 1.0, through: 30, by: 1))) // 30 hourly replies
-        #expect(s.samples?.count == 26) // from the baseline at the 25h cutoff to now
-        #expect(s.cost(since: now.addingTimeInterval(-24.5 * 3600)) == 25)
+        let kept = Int(SessionSnapshot.costHistory / 3600) // 169 hours
+        let s = try session(Array(stride(from: 1.0, through: Double(kept + 30), by: 1))) // hourly replies
+        #expect(s.samples?.count == kept + 1) // from the baseline at the cutoff to now
+        #expect(s.cost(since: now.addingTimeInterval(-(Double(kept) - 0.5) * 3600)) == Double(kept))
     }
 
     @Test func sessionFromBeforeSamplesDoesNotCountOldSpend() throws {
@@ -294,6 +297,8 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         #expect(store.sessions().first?.accountKey == ConfigDir.key(for: "/Users/me/.claude-work"))
         #expect(store.sessions().first?.cacheExpiresAt == Date(timeIntervalSince1970: 1738429200))
         #expect(store.sessions().first?.recacheTokens == 45000)
+        #expect(store.sessions().first?.cacheHealth == CacheHealth(
+            hitRatio: 0.91, misses: 2, lastMissAt: Date(timeIntervalSince1970: 1738425230), lastMissCauses: ["tools_changed"]))
     }
 
     @Test func recorderDatesReadingsByLastReply() throws {
@@ -643,6 +648,99 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         let due = CacheAlerts.due(sessions, watched: ["a", "c", "d"], now: now)
         #expect(due == [CacheAlerts.Alert(sessionId: "a", fireAt: now.addingTimeInterval(3600 - CacheAlerts.lead))])
         #expect(sessions[0].displayName == "app")
+    }
+}
+
+@Suite struct CacheHealthTests {
+    let now = Date(timeIntervalSince1970: 1738420000)
+
+    @Test func recentMissesAreFlagged() {
+        let health = CacheHealth(hitRatio: 0.8, misses: 1, lastMissAt: now, lastMissCauses: [])
+        #expect(health.missedRecently(at: now.addingTimeInterval(59 * 60)))
+        #expect(!health.missedRecently(at: now.addingTimeInterval(61 * 60)))
+        #expect(!CacheHealth(hitRatio: 1, misses: 0, lastMissAt: nil, lastMissCauses: []).missedRecently(at: now))
+    }
+
+    @Test func causesReadAsWords() {
+        #expect(CacheHealth.describe(cause: "tools_changed") == "tools changed")
+        #expect(CacheHealth.describe(cause: "ttl_expired_5m") == "the 5-minute cache expired")
+        #expect(CacheHealth.describe(cause: "likely_server_side") == "likely on Anthropic's side")
+    }
+
+    @Test func noHealthBeforeClaudeCodeReportsIt() throws {
+        let input = try StatusLineInput.decode(Data(#"{"session_id":"s","prompt_cache":{"warm":true,"expires_at":1738429200}}"#.utf8))
+        #expect(SessionSnapshot.from(input, configDir: "/x", process: nil, previous: nil, now: now)?.cacheHealth == nil)
+    }
+}
+
+@Suite struct Series {
+    let now = Date(timeIntervalSince1970: 1738420000)
+
+    func session(_ id: String, _ samples: [UsageSample]) -> SessionSnapshot {
+        SessionSnapshot(sessionId: id, accountKey: "k", name: nil, projectDir: nil, model: nil, costUSD: nil,
+                        contextPercentage: nil, process: nil, firstSeenAt: now, updatedAt: now, samples: samples)
+    }
+
+    func sample(_ minutesAgo: Double, _ fiveHour: Double, resetsIn: TimeInterval = 3600) -> UsageSample {
+        UsageSample(at: now.addingTimeInterval(-minutesAgo * 60), usd: nil,
+                    fiveHour: LimitWindow(usedPercentage: fiveHour, resetsAt: now.addingTimeInterval(resetsIn)),
+                    sevenDay: LimitWindow(usedPercentage: 40, resetsAt: now.addingTimeInterval(86400)))
+    }
+
+    @Test func mergesSessionsInTimeOrderAndEndsNow() {
+        let points = UsageSeries.points([session("a", [sample(30, 10), sample(10, 30)]), session("b", [sample(20, 20)])],
+                                        since: now.addingTimeInterval(-3600), now: now)
+        #expect(points.map(\.fiveHour) == [10, 20, 30, 30])
+        #expect(points.last?.at == now)
+        #expect(points.allSatisfy { $0.sevenDay == 40 })
+    }
+
+    @Test func lateReportFromAnIdleSessionDoesNotPullItBack() {
+        let stale = UsageSample(at: now.addingTimeInterval(-5 * 60), usd: nil,
+                                fiveHour: LimitWindow(usedPercentage: 5, resetsAt: now.addingTimeInterval(3600)))
+        let points = UsageSeries.points([session("a", [sample(10, 30)]), session("b", [stale])],
+                                        since: now.addingTimeInterval(-3600), now: now)
+        #expect(points.map(\.fiveHour) == [30, 30, 30])
+    }
+
+    @Test func dropsToZeroAtAReset() {
+        // The 5-hour window reset 15 minutes ago and nothing has been reported since.
+        let points = UsageSeries.points([session("a", [sample(30, 50, resetsIn: -15 * 60)])],
+                                        since: now.addingTimeInterval(-3600), now: now)
+        #expect(points.map(\.fiveHour) == [50, 0, 0])
+        #expect(points[1].at == now.addingTimeInterval(-15 * 60))
+    }
+
+    @Test func readingsBeforeThePeriodStillApply() {
+        let points = UsageSeries.points([session("a", [sample(120, 25, resetsIn: 3 * 3600)])],
+                                        since: now.addingTimeInterval(-3600), now: now)
+        #expect(points.map(\.fiveHour) == [25, 25])
+        #expect(points.first?.at == now.addingTimeInterval(-3600))
+        #expect(UsageSeries.points([], since: now, now: now).isEmpty)
+    }
+}
+
+@Suite struct Updates {
+    @Test func comparesVersions() {
+        #expect(UpdateCheck.isNewer("0.5.0", than: "0.4.1"))
+        #expect(UpdateCheck.isNewer("0.10.0", than: "0.9.3"))
+        #expect(UpdateCheck.isNewer("0.4.1", than: "0.4.1-dev"))
+        #expect(!UpdateCheck.isNewer("0.4.1", than: "0.4.1"))
+        #expect(!UpdateCheck.isNewer("0.4.0", than: "0.4.1"))
+        #expect(!UpdateCheck.isNewer("0.5.0-beta", than: "0.5.0"))
+    }
+
+    @Test func parsesLatestRelease() throws {
+        let json = #"{"tag_name":"v0.5.0","html_url":"https://github.com/DanPurdy/headroom/releases/tag/v0.5.0","assets":[{"name":"notes.txt","browser_download_url":"https://github.com/x"},{"name":"Headroom-0.5.0.zip","browser_download_url":"https://github.com/DanPurdy/headroom/releases/download/v0.5.0/Headroom-0.5.0.zip"}]}"#
+        let release = try #require(UpdateCheck.parse(Data(json.utf8)))
+        #expect(release.version == "0.5.0")
+        #expect(release.download.lastPathComponent == "Headroom-0.5.0.zip")
+    }
+
+    @Test func rejectsDownloadsFromElsewhere() {
+        let json = #"{"tag_name":"v0.5.0","html_url":"https://github.com/x","assets":[{"name":"Headroom-0.5.0.zip","browser_download_url":"https://evil.example/Headroom-0.5.0.zip"}]}"#
+        #expect(UpdateCheck.parse(Data(json.utf8)) == nil)
+        #expect(UpdateCheck.parse(Data("{}".utf8)) == nil)
     }
 }
 

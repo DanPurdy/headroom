@@ -14,15 +14,19 @@ every Claude Code account on your Mac at once.
   haven't replied for 15 minutes are marked idle.
 - **Prompt cache countdown** per session: how long until the conversation's cache goes cold,
   after which the next message re-reads the whole conversation at full price. Click it to be
-  notified 5 minutes before. Needs Claude Code 2.1.251 or later.
+  notified 5 minutes before. A warning marks a session whose cache missed in the last hour,
+  with Claude Code's guess at why. Needs Claude Code 2.1.251 or later.
 - **Usage alerts** (optional): a notification when a limit passes 80% or 90%, and again when
   it resets.
 - **Today's API-equivalent cost** per account, as estimated by Claude Code. It is not what
   your subscription bills.
-- **History** of conversations with replies in the last 1, 12 or 24 hours: how much of the
-  5-hour and weekly limits each one used in that time, with totals per account.
+- **History** for the last 1, 12 or 24 hours or 7 days: a chart of each account's 5-hour and
+  weekly usage, and the conversations with replies in that time, with how much of each limit
+  they used.
 - **Optional Live usage** per account, which also catches use from claude.ai, the desktop
   app and other devices.
+- **Update notifications**: Headroom checks GitHub for a new release once a day, and can
+  install it from the menu.
 
 ## Requirements
 
@@ -69,7 +73,8 @@ Claude Code passes your plan usage (`rate_limits`) to its
 Headroom wraps that command: it saves the figures to small JSON files in
 `~/Library/Application Support/Headroom`, then runs your original status line with the same
 input. The status line runs locally and uses no tokens. Without Live, Headroom never touches
-your login or calls any API.
+your login or calls Anthropic. Its only network request is the daily update check to
+`api.github.com`, which you can switch off in Settings (**Check for updates**).
 
 Those figures are as of the session's last reply, which for an idle session can be days
 old. Headroom dates each reading by the last reply in the session's transcript, and never

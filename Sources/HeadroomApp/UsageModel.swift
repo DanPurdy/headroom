@@ -71,6 +71,10 @@ final class UsageModel {
     /// Sessions to notify about before their prompt cache goes cold.
     private(set) var watchedSessions = Set(UserDefaults.standard.stringArray(forKey: UsageModel.watchedKey) ?? [])
     var notificationsAvailable: Bool { Notifier.shared != nil }
+    /// A newer release, once a check has found one.
+    private(set) var update: UpdateCheck.Release?
+    private(set) var updating = false
+    private(set) var checksForUpdates = UserDefaults.standard.object(forKey: UsageModel.checkUpdatesKey) as? Bool ?? true
 
     @ObservationIgnored private let store = SnapshotStore()
     @ObservationIgnored private let installer = Installer()
@@ -88,6 +92,9 @@ final class UsageModel {
     private static let alertThresholdKey = "alertThreshold"
     private static let watchedKey = "watchedCacheSessions"
     private static let firedAlertsKey = "firedLimitAlerts"
+    private static let checkUpdatesKey = "checkForUpdates"
+    private static let lastUpdateCheckKey = "lastUpdateCheck"
+    private static let announcedUpdateKey = "announcedUpdate"
 
     @ObservationIgnored private var addedDirs: [String] = UserDefaults.standard.stringArray(forKey: UsageModel.addedDefaultsKey) ?? []
 
@@ -108,6 +115,7 @@ final class UsageModel {
         }
         reload()
         runDueLiveChecks()
+        checkForUpdatesIfDue()
     }
 
     /// One menu bar column per account with a reading. A window never seen counts as 0%.
@@ -216,6 +224,49 @@ final class UsageModel {
         }
         let active = accounts.flatMap(\.activeSessions)
         notifier.schedule(CacheAlerts.due(active, watched: watchedSessions, now: now), sessions: active)
+    }
+
+    // MARK: - Updates
+
+    func setChecksForUpdates(_ enabled: Bool) {
+        checksForUpdates = enabled
+        UserDefaults.standard.set(enabled, forKey: Self.checkUpdatesKey)
+        if enabled { checkForUpdatesIfDue() } else { update = nil }
+        scheduleWake()
+    }
+
+    func installUpdate() {
+        guard let update, !updating else { return }
+        updating = true
+        Task.detached(priority: .userInitiated) {
+            do throws(Updater.Failure) {
+                try await Updater.install(update)
+            } catch {
+                await MainActor.run {
+                    self.updating = false
+                    self.lastError = error.message
+                }
+            }
+        }
+    }
+
+    private var nextUpdateCheck: Date? {
+        guard checksForUpdates, Bundle.main.bundleURL.pathExtension == "app" else { return nil }
+        let last = UserDefaults.standard.object(forKey: Self.lastUpdateCheckKey) as? Date ?? .distantPast
+        return last.addingTimeInterval(UpdateCheck.interval)
+    }
+
+    private func checkForUpdatesIfDue() {
+        guard let due = nextUpdateCheck, due <= Date() else { return }
+        UserDefaults.standard.set(Date(), forKey: Self.lastUpdateCheckKey)
+        Task {
+            guard let release = await Updater.newerRelease(), checksForUpdates else { return }
+            update = release
+            if UserDefaults.standard.string(forKey: Self.announcedUpdateKey) != release.version {
+                UserDefaults.standard.set(release.version, forKey: Self.announcedUpdateKey)
+                Notifier.shared?.announce(release)
+            }
+        }
     }
 
     // MARK: - Live usage
@@ -381,6 +432,7 @@ final class UsageModel {
         moments += lastSnapshots.map { $0.updatedAt.addingTimeInterval(staleAfter($0.configDir)) }
         moments += lastSessions.compactMap { $0.lastReplyAt?.addingTimeInterval(Self.idleAfter) }
         moments += live.values.compactMap(\.nextDue)
+        moments += [nextUpdateCheck].compactMap { $0 }
         // Not startOfDay + 24h: that's 23:00 on the day the clocks go back.
         if let midnight = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: now)) {
             moments.append(midnight)
@@ -389,6 +441,7 @@ final class UsageModel {
         wakeTimer = Timer.scheduledTimer(withTimeInterval: next.timeIntervalSince(now), repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.runDueLiveChecks()
+                self?.checkForUpdatesIfDue()
                 self?.reload()
             }
         }

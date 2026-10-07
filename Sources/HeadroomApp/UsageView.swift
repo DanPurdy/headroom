@@ -90,6 +90,12 @@ struct UsageView: View {
                             .buttonStyle(.link)
                             .foregroundStyle(.orange)
                     }
+                    if let update = model.update {
+                        Button(model.updating ? "Updating…" : "Update to \(update.version)") { model.installUpdate() }
+                            .buttonStyle(.link)
+                            .disabled(model.updating)
+                            .help("Download it, replace this copy and reopen Headroom")
+                    }
                     Spacer()
                     Button("Quit") { NSApplication.shared.terminate(nil) }
                         .buttonStyle(.borderless)
@@ -296,6 +302,18 @@ struct SessionLine: View {
                 label
             }
         }
+        if let health = session.cacheHealth, health.missedRecently(at: now), let missedAt = health.lastMissAt {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .help(missHelp(health, at: missedAt))
+        }
+    }
+
+    private func missHelp(_ health: CacheHealth, at missedAt: Date) -> String {
+        let cause = health.lastMissCauses.isEmpty ? "cause unknown"
+            : health.lastMissCauses.map(CacheHealth.describe).joined(separator: ", ")
+        return "Cache miss \(Formatting.age(of: missedAt, at: now)): \(cause). The conversation was re-read at full price."
+            + (health.hitRatio.map { " Hit rate \(Formatting.percent($0 * 100))." } ?? "")
     }
 
     private func cacheHelp(warm: Bool, expires: Date) -> String {
@@ -303,8 +321,11 @@ struct SessionLine: View {
         let state = warm
             ? "Cache warm until \(expires.formatted(date: .omitted, time: .shortened)). After that, the next message\(recache) at full price."
             : "Cache cold. The next message\(recache) at full price."
-        guard toggleWatch != nil else { return state }
-        return state + (watched ? "\nClick to stop notifying." : "\nClick to be notified 5 minutes before it goes cold.")
+        let stats = session.cacheHealth.flatMap { health in
+            health.hitRatio.map { " Hit rate \(Formatting.percent($0 * 100)), \(health.misses) miss\(health.misses == 1 ? "" : "es")." }
+        } ?? ""
+        guard toggleWatch != nil else { return state + stats }
+        return state + stats + (watched ? "\nClick to stop notifying." : "\nClick to be notified 5 minutes before it goes cold.")
     }
 
     private static let coolingAfter: TimeInterval = 10 * 60

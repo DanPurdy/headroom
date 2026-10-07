@@ -40,6 +40,13 @@ struct SettingsPage: View {
                 .controlSize(.small)
                 .font(.callout)
 
+            Toggle("Check for updates", isOn: Binding(get: { model.checksForUpdates },
+                                                      set: { model.setChecksForUpdates($0) }))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .font(.callout)
+                .help("Asks GitHub for the latest release once a day")
+
             if model.notificationsAvailable {
                 Picker("Usage alerts", selection: Binding(get: { model.alertThreshold },
                                                           set: { model.setAlertThreshold($0) })) {

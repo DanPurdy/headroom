@@ -33,9 +33,17 @@ public struct StatusLineInput: Decodable, Sendable {
     }
 
     public struct PromptCache: Decodable, Sendable {
+        public struct MissCause: Decodable, Sendable {
+            public var causes: [String]?
+        }
+
         public var warm: Bool?
         public var expiresAt: Double?
         public var recacheTokensIfCold: Double?
+        public var hitRatio: Double?
+        public var misses: Int?
+        public var lastMissAt: Double?
+        public var lastMissCause: MissCause?
     }
 
     public var sessionId: String?
