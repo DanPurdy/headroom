@@ -615,6 +615,23 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         #expect(outcome.fired.isEmpty)
     }
 
+    @Test func alertsFiredTogetherShareOneNoticePerAccount() {
+        let both = LimitAlerts.evaluate([account(fiveHour: 85), AccountSnapshot(
+            key: "p", label: "Personal", configDir: "/y",
+            fiveHour: LimitWindow(usedPercentage: 90, resetsAt: now.addingTimeInterval(2 * 3600)), sevenDay: nil,
+            updatedAt: now)], threshold: 10, fired: [:], now: now)
+        let notices = LimitAlerts.notices(for: both, now: now)
+        #expect(notices.map(\.title) == ["Personal: 5-hour 90%", "Work: 5-hour 85% · weekly 10%"])
+        #expect(notices[1].body == "5-hour resets in 1h · weekly resets in 1d")
+        #expect(notices[1].id == "limit-k|5-hour,k|weekly")
+
+        let reset = LimitAlerts.Outcome(reset: [
+            .init(accountKey: "k", label: "Work", window: .fiveHour, used: 0, resetsAt: now),
+            .init(accountKey: "k", label: "Work", window: .weekly, used: 0, resetsAt: now),
+        ])
+        #expect(LimitAlerts.notices(for: reset, now: now).map(\.title) == ["Work: 5-hour and weekly limits reset"])
+    }
+
     @Test func cacheAlertsOnlyForWatchedWarmSessions() {
         func session(_ id: String, expiresIn: TimeInterval?) -> SessionSnapshot {
             SessionSnapshot(sessionId: id, accountKey: "k", name: nil, projectDir: "/work/app", model: nil, costUSD: nil,

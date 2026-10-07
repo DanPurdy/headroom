@@ -136,6 +136,8 @@ final class Panel: NSPanel {
         // Above other apps' windows, but below the Add folder… sheet (a modal panel).
         level = .floating
         collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .transient]
+        // The panel never activates the app, and macOS only shows tooltips for the active app.
+        allowsToolTipsWhenApplicationIsInactive = true
     }
 
     override var canBecomeKey: Bool { true }

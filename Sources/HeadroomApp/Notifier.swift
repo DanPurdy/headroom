@@ -1,5 +1,6 @@
 import Foundation
 import HeadroomCore
+import os
 import UserNotifications
 
 /// Delivers usage and cache notifications. nil outside an app bundle (`swift run`), where
@@ -23,23 +24,23 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func deliver(_ outcome: LimitAlerts.Outcome) {
-        for alert in outcome.crossed {
-            post(id: "limit-\(LimitAlerts.key(alert.accountKey, alert.window))", title: "\(alert.label): \(Formatting.percent(alert.used)) of \(alert.window.rawValue) limit",
-                 body: "Resets \(alert.resetsAt.formatted(date: .omitted, time: .shortened)).")
-        }
-        for alert in outcome.reset {
-            post(id: "reset-\(LimitAlerts.key(alert.accountKey, alert.window))", title: "\(alert.label): \(alert.window.rawValue) limit reset",
-                 body: "Back to 0%.")
+        for notice in LimitAlerts.notices(for: outcome, now: Date()) {
+            post(id: notice.id, title: notice.title, body: notice.body)
         }
     }
 
     func schedule(_ alerts: [CacheAlerts.Alert], sessions: [SessionSnapshot]) {
-        if !clearedStale {
-            // Left over from a previous run; those still wanted are scheduled again below.
-            center.removeAllPendingNotificationRequests()
-            clearedStale = true
-        }
         let wanted = Dictionary(alerts.map { ($0.sessionId, $0.fireAt) }, uniquingKeysWith: { first, _ in first })
+        if !clearedStale {
+            clearedStale = true
+            // Cache alerts left over from a previous run. Only these: an immediate usage alert
+            // counts as pending until it's shown, so clearing everything would drop it.
+            let keep = Set(wanted.keys.map(Self.cacheID))
+            center.getPendingNotificationRequests { requests in
+                let stale = requests.map(\.identifier).filter { $0.hasPrefix("cache-") && !keep.contains($0) }
+                UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: stale)
+            }
+        }
         let dropped = scheduled.keys.filter { wanted[$0] == nil }
         center.removePendingNotificationRequests(withIdentifiers: dropped.map(Self.cacheID))
         for (id, fireAt) in wanted where scheduled[id] != fireAt {
@@ -59,8 +60,12 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         content.body = body
         content.sound = .default
         let trigger = date.map { UNTimeIntervalNotificationTrigger(timeInterval: max($0.timeIntervalSinceNow, 1), repeats: false) }
-        center.add(UNNotificationRequest(identifier: id, content: content, trigger: trigger))
+        center.add(UNNotificationRequest(identifier: id, content: content, trigger: trigger)) { error in
+            if let error { Self.log.error("Couldn't post \(id, privacy: .public): \(error.localizedDescription, privacy: .public)") }
+        }
     }
+
+    nonisolated private static let log = Logger(subsystem: "io.github.danpurdy.headroom", category: "notifications")
 
     /// Show banners even though a menu bar app counts as frontmost while its panel is open.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,

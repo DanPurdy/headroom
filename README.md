@@ -8,8 +8,8 @@ every Claude Code account on your Mac at once.
 - **5-hour and weekly limits** per account, with reset countdowns. The menu bar shows one
   column per account: its label beside two small bars with percentages, 5-hour on top and
   weekly below.
-- **Pace** for each limit: a marker where usage would be at an even rate, and when you'd hit
-  the limit if you carry on at the rate so far.
+- **Pace** for each limit: a line showing how much of the window has passed, and when you'd
+  run out if you carry on at the rate so far.
 - **Open Claude Code sessions** per account, with model and context used. Sessions that
   haven't replied for 15 minutes are marked idle.
 - **Prompt cache countdown** per session: how long until the conversation's cache goes cold,
