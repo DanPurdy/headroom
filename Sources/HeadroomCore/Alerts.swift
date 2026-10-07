@@ -58,6 +58,41 @@ public enum LimitAlerts {
         }
         return outcome
     }
+
+    public struct Notice: Equatable, Sendable {
+        public var id: String
+        public var title: String
+        public var body: String
+    }
+
+    /// One notice per account for the alerts that fired together: macOS shows only one banner
+    /// at a time, so separate notifications posted at once get lost behind each other.
+    public static func notices(for outcome: Outcome, now: Date) -> [Notice] {
+        func byAccount(_ alerts: [Alert]) -> [[Alert]] {
+            Dictionary(grouping: alerts, by: \.accountKey).values.sorted { $0[0].label < $1[0].label }
+        }
+        func id(_ prefix: String, _ alerts: [Alert]) -> String {
+            prefix + alerts.map { key($0.accountKey, $0.window) }.joined(separator: ",")
+        }
+        let crossed = byAccount(outcome.crossed).map { alerts in
+            Notice(id: id("limit-", alerts),
+                   title: "\(alerts[0].label): " + alerts.map { "\($0.window.rawValue) \(Formatting.percent($0.used))" }
+                       .joined(separator: " · "),
+                   body: alerts.map { "\($0.window.rawValue) resets in \(Formatting.countdown(until: $0.resetsAt, from: now))" }
+                       .joined(separator: " · ").capitalizingFirstLetter)
+        }
+        let reset = byAccount(outcome.reset).map { alerts in
+            Notice(id: id("reset-", alerts),
+                   title: "\(alerts[0].label): " + alerts.map(\.window.rawValue).joined(separator: " and ")
+                       + (alerts.count == 1 ? " limit reset" : " limits reset"),
+                   body: "Back to 0%.")
+        }
+        return crossed + reset
+    }
+}
+
+private extension String {
+    var capitalizingFirstLetter: String { prefix(1).uppercased() + dropFirst() }
 }
 
 public enum CacheAlerts {

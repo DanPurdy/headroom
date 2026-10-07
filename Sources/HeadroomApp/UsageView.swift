@@ -161,8 +161,8 @@ struct AccountCard: View {
 
             if let snapshot = row.snapshot {
                 Group {
-                    LimitBar(title: "5-hour", window: snapshot.fiveHour, length: LimitWindow.fiveHourLength, now: now)
-                    LimitBar(title: "Weekly", window: snapshot.sevenDay, length: LimitWindow.sevenDayLength, now: now)
+                    LimitBar(title: "5-hour", period: "the 5 hours", window: snapshot.fiveHour, length: LimitWindow.fiveHourLength, now: now)
+                    LimitBar(title: "Weekly", period: "the week", window: snapshot.sevenDay, length: LimitWindow.sevenDayLength, now: now)
                 }
                 .opacity(row.isStale ? 0.5 : 1)
             } else {
@@ -193,6 +193,8 @@ struct AccountCard: View {
 
 struct LimitBar: View {
     let title: String
+    /// How the tooltip names the window, e.g. "the week".
+    let period: String
     let window: LimitWindow?
     let length: TimeInterval
     let now: Date
@@ -231,13 +233,13 @@ struct LimitBar: View {
             }
             .frame(height: 6)
             if let limitAt = pace?.limitAt {
-                Text("At this rate, limit in \(Formatting.countdown(until: limitAt, from: now))")
+                Text("On course to run out in \(Formatting.countdown(until: limitAt, from: now))")
                     .font(.caption2)
                     .foregroundStyle(.orange)
             }
         }
         .contentShape(Rectangle())
-        .help(pace.map { "Marker: even pace, \(Formatting.percent($0.even)) by now" } ?? "")
+        .help(pace.map { "The line marks how much of \(period) has passed (\(Formatting.percent($0.even))). Past it, you're on course to run out before the reset." } ?? "")
     }
 }
 

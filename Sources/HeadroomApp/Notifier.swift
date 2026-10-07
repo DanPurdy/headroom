@@ -24,13 +24,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func deliver(_ outcome: LimitAlerts.Outcome) {
-        for alert in outcome.crossed {
-            post(id: "limit-\(LimitAlerts.key(alert.accountKey, alert.window))", title: "\(alert.label): \(Formatting.percent(alert.used)) of \(alert.window.rawValue) limit",
-                 body: "Resets \(alert.resetsAt.formatted(date: .omitted, time: .shortened)).")
-        }
-        for alert in outcome.reset {
-            post(id: "reset-\(LimitAlerts.key(alert.accountKey, alert.window))", title: "\(alert.label): \(alert.window.rawValue) limit reset",
-                 body: "Back to 0%.")
+        for notice in LimitAlerts.notices(for: outcome, now: Date()) {
+            post(id: notice.id, title: notice.title, body: notice.body)
         }
     }
 
