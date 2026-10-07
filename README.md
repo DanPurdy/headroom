@@ -8,8 +8,15 @@ every Claude Code account on your Mac at once.
 - **5-hour and weekly limits** per account, with reset countdowns. The menu bar shows one
   column per account: its label beside two small bars with percentages, 5-hour on top and
   weekly below.
+- **Pace** for each limit: a marker where usage would be at an even rate, and when you'd hit
+  the limit if you carry on at the rate so far.
 - **Open Claude Code sessions** per account, with model and context used. Sessions that
   haven't replied for 15 minutes are marked idle.
+- **Prompt cache countdown** per session: how long until the conversation's cache goes cold,
+  after which the next message re-reads the whole conversation at full price. Click it to be
+  notified 5 minutes before. Needs Claude Code 2.1.251 or later.
+- **Usage alerts** (optional): a notification when a limit passes 80% or 90%, and again when
+  it resets.
 - **Today's API-equivalent cost** per account, as estimated by Claude Code. It is not what
   your subscription bills.
 - **History** of conversations with replies in the last 1, 12 or 24 hours: how much of the
@@ -47,7 +54,8 @@ System Settings → Privacy & Security → Open Anyway, or run
 3. Give each a label and press **Install**. Press Return in the label field to rename it
    later.
 4. Send a message in Claude Code on that account. Its usage appears straight away.
-5. Optionally switch on **Live usage** for an account (see below) and **Launch at login**.
+5. Optionally switch on **Live usage** for an account (see below), **Launch at login** and
+   **Usage alerts**.
 
 **Install** edits the `statusLine` setting in that folder's `settings.json` so Headroom sees
 each reply. Your existing status line keeps working exactly as before. A copy of the

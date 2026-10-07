@@ -27,6 +27,25 @@ public struct LimitWindow: Codable, Equatable, Sendable {
         return a.resetsAt > b.resetsAt ? a : b
     }
 
+    public static let fiveHourLength: TimeInterval = 5 * 3600
+    public static let sevenDayLength: TimeInterval = 7 * 24 * 3600
+
+    public struct Pace: Equatable, Sendable {
+        /// Where usage would be now if spread evenly over the window, 0–100.
+        public var even: Double
+        /// When usage reaches 100% at its average rate so far; nil if not before the reset.
+        public var limitAt: Date?
+    }
+
+    /// `length` is the window's span, e.g. `fiveHourLength`. nil once the window has reset.
+    public func pace(length: TimeInterval, at now: Date) -> Pace? {
+        let start = resetsAt.addingTimeInterval(-length)
+        guard now < resetsAt, now > start else { return nil }
+        let elapsed = now.timeIntervalSince(start)
+        let limitAt = usedPercentage > 0 ? start.addingTimeInterval(elapsed * 100 / usedPercentage) : nil
+        return Pace(even: elapsed / length * 100, limitAt: limitAt.flatMap { $0 < resetsAt ? max($0, now) : nil })
+    }
+
     init?(_ window: StatusLineInput.Window?) {
         guard let pct = window?.usedPercentage, let resets = window?.resetsAt else { return nil }
         self.init(usedPercentage: pct, resetsAt: Date(timeIntervalSince1970: resets))
@@ -109,10 +128,15 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     /// Cost and plan usage as of each reply, for what the session used within a period.
     /// nil in files from before it existed.
     public var samples: [UsageSample]?
+    /// When the conversation's prompt cache goes (or went) cold; nil if Claude Code doesn't say.
+    public var cacheExpiresAt: Date?
+    /// Tokens the next message re-processes at full price once the cache has gone cold.
+    public var recacheTokens: Int?
 
     public init(sessionId: String, accountKey: String, name: String?, projectDir: String?, model: String?,
                 costUSD: Double?, contextPercentage: Double?, process: ProcessIdentity?, lastReplyAt: Date? = nil,
-                firstSeenAt: Date, updatedAt: Date, samples: [UsageSample]? = nil) {
+                firstSeenAt: Date, updatedAt: Date, samples: [UsageSample]? = nil,
+                cacheExpiresAt: Date? = nil, recacheTokens: Int? = nil) {
         self.sessionId = sessionId
         self.accountKey = accountKey
         self.name = name
@@ -125,6 +149,16 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         self.firstSeenAt = firstSeenAt
         self.updatedAt = updatedAt
         self.samples = samples
+        self.cacheExpiresAt = cacheExpiresAt
+        self.recacheTokens = recacheTokens
+    }
+
+    public var displayName: String {
+        name ?? projectDir.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "session"
+    }
+
+    public func isCacheWarm(at now: Date) -> Bool {
+        cacheExpiresAt.map { $0 > now } ?? false
     }
 
     /// How far back samples are kept; longer than any period the app shows.
@@ -185,7 +219,12 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
             samples: samples(previous, adding: UsageSample(at: lastReplyAt ?? now, usd: input.cost?.totalCostUsd,
                                                            fiveHour: LimitWindow(input.rateLimits?.fiveHour),
                                                            sevenDay: LimitWindow(input.rateLimits?.sevenDay)),
-                             now: now)
+                             now: now),
+            cacheExpiresAt: input.promptCache?.expiresAt.map { expires in
+                let date = Date(timeIntervalSince1970: expires)
+                return input.promptCache?.warm == false ? min(date, now) : date
+            },
+            recacheTokens: input.promptCache?.recacheTokensIfCold.map { Int($0) }
         )
     }
 }
