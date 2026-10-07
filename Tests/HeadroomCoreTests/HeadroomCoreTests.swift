@@ -12,6 +12,7 @@ let sampleInput = """
   "workspace": {"current_dir": "/work/app/src", "project_dir": "/work/app"},
   "cost": {"total_cost_usd": 1.25},
   "context_window": {"used_percentage": 8},
+  "prompt_cache": {"warm": true, "ttl": "1h", "expires_at": 1738429200, "recache_tokens_if_cold": 45000},
   "rate_limits": {
     "five_hour": {"used_percentage": 23.5, "resets_at": 1738425600},
     "seven_day": {"used_percentage": 41.2, "resets_at": 1738857600}
@@ -110,6 +111,50 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         let account = AccountSnapshot(key: "k", label: "Main", configDir: "/x", fiveHour: nil, sevenDay: nil, updatedAt: now)
         #expect(!account.isStale(at: now.addingTimeInterval(29 * 60)))
         #expect(account.isStale(at: now.addingTimeInterval(31 * 60)))
+    }
+
+    @Test func cacheIsWarmUntilItExpires() throws {
+        let session = try #require(SessionSnapshot.from(try StatusLineInput.decode(Data(sampleInput.utf8)), configDir: "/x",
+                                                        process: nil, previous: nil, now: now))
+        let expires = Date(timeIntervalSince1970: 1738429200)
+        #expect(session.isCacheWarm(at: expires.addingTimeInterval(-1)))
+        #expect(!session.isCacheWarm(at: expires))
+    }
+
+    @Test func coldCacheStaysColdAndUnreportedHasNoExpiry() throws {
+        let cold = try StatusLineInput.decode(Data(#"{"session_id":"s","prompt_cache":{"warm":false,"expires_at":1738429200}}"#.utf8))
+        let session = SessionSnapshot.from(cold, configDir: "/x", process: nil, previous: nil, now: now)
+        #expect(session?.cacheExpiresAt == now)
+        #expect(session?.isCacheWarm(at: now) == false)
+        let uncached = try StatusLineInput.decode(Data(#"{"session_id":"s","prompt_cache":{"warm":false,"expires_at":null}}"#.utf8))
+        #expect(SessionSnapshot.from(uncached, configDir: "/x", process: nil, previous: nil, now: now)?.cacheExpiresAt == nil)
+        let older = try StatusLineInput.decode(Data(#"{"session_id":"s"}"#.utf8))
+        #expect(SessionSnapshot.from(older, configDir: "/x", process: nil, previous: nil, now: now)?.cacheExpiresAt == nil)
+    }
+
+    @Test func paceAgainstAnEvenSpread() throws {
+        // 2h into a 5-hour window: an even pace is 40%.
+        let window = LimitWindow(usedPercentage: 40, resetsAt: now.addingTimeInterval(3 * 3600))
+        let pace = try #require(window.pace(length: LimitWindow.fiveHourLength, at: now))
+        #expect(abs(pace.even - 40) < 0.001)
+        #expect(pace.limitAt == nil) // exactly on pace reaches 100% at the reset, not before
+    }
+
+    @Test func fastUseProjectsWhenTheLimitIsReached() throws {
+        // 50% in the first hour runs out after two.
+        let window = LimitWindow(usedPercentage: 50, resetsAt: now.addingTimeInterval(4 * 3600))
+        let pace = try #require(window.pace(length: LimitWindow.fiveHourLength, at: now))
+        #expect(pace.limitAt == now.addingTimeInterval(3600))
+        // Already over: the limit is now, not in the past.
+        let over = LimitWindow(usedPercentage: 100, resetsAt: now.addingTimeInterval(3600))
+        #expect(over.pace(length: LimitWindow.fiveHourLength, at: now)?.limitAt == now)
+    }
+
+    @Test func noPaceOnceReset() {
+        let window = LimitWindow(usedPercentage: 10, resetsAt: now)
+        #expect(window.pace(length: LimitWindow.sevenDayLength, at: now) == nil)
+        #expect(LimitWindow(usedPercentage: 0, resetsAt: now.addingTimeInterval(60))
+            .pace(length: LimitWindow.fiveHourLength, at: now)?.limitAt == nil)
     }
 
     @Test func usageDropsToZeroAfterReset() {
@@ -247,6 +292,8 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         #expect(store.accounts().first?.updatedAt == now)
         #expect(store.sessions().map(\.sessionId) == ["abc-123"])
         #expect(store.sessions().first?.accountKey == ConfigDir.key(for: "/Users/me/.claude-work"))
+        #expect(store.sessions().first?.cacheExpiresAt == Date(timeIntervalSince1970: 1738429200))
+        #expect(store.sessions().first?.recacheTokens == 45000)
     }
 
     @Test func recorderDatesReadingsByLastReply() throws {
@@ -525,6 +572,63 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
     }
 }
 
+@Suite struct Alerts {
+    let now = Date(timeIntervalSince1970: 1738420000)
+
+    func account(fiveHour: Double, resetsIn: TimeInterval = 3600) -> AccountSnapshot {
+        AccountSnapshot(key: "k", label: "Work", configDir: "/x",
+                        fiveHour: LimitWindow(usedPercentage: fiveHour, resetsAt: now.addingTimeInterval(resetsIn)),
+                        sevenDay: LimitWindow(usedPercentage: 10, resetsAt: now.addingTimeInterval(86400)), updatedAt: now)
+    }
+
+    @Test func alertsOncePerWindowWhenCrossingThreshold() {
+        let first = LimitAlerts.evaluate([account(fiveHour: 85)], threshold: 80, fired: [:], now: now)
+        #expect(first.crossed.map(\.window) == [.fiveHour])
+        #expect(first.crossed.first?.label == "Work")
+        // Same window, a few seconds' jitter in the reset time: no repeat.
+        let jittered = account(fiveHour: 92, resetsIn: 3603)
+        let second = LimitAlerts.evaluate([jittered], threshold: 80, fired: first.fired, now: now.addingTimeInterval(60))
+        #expect(second.crossed.isEmpty)
+        #expect(second.fired == first.fired)
+    }
+
+    @Test func belowThresholdOrOffDoesNothing() {
+        #expect(LimitAlerts.evaluate([account(fiveHour: 79)], threshold: 80, fired: [:], now: now) == .init())
+        #expect(LimitAlerts.evaluate([account(fiveHour: 99)], threshold: nil, fired: [:], now: now) == .init())
+    }
+
+    @Test func announcesResetOnceThenAlertsInTheNextWindow() {
+        let fired = LimitAlerts.evaluate([account(fiveHour: 85)], threshold: 80, fired: [:], now: now).fired
+        let afterReset = now.addingTimeInterval(3601)
+        let reset = LimitAlerts.evaluate([account(fiveHour: 85)], threshold: 80, fired: fired, now: afterReset)
+        #expect(reset.reset.map(\.window) == [.fiveHour])
+        #expect(reset.crossed.isEmpty) // the old reading reads as 0% once its window has reset
+        #expect(reset.fired.isEmpty)
+        let nextWindow = account(fiveHour: 81, resetsIn: 5 * 3600)
+        #expect(LimitAlerts.evaluate([nextWindow], threshold: 80, fired: reset.fired, now: afterReset).crossed.count == 1)
+    }
+
+    @Test func staleResetIsDroppedQuietly() {
+        let fired = [LimitAlerts.key("k", .fiveHour): now.addingTimeInterval(-2 * 3600)]
+        let outcome = LimitAlerts.evaluate([account(fiveHour: 5, resetsIn: 3 * 3600)], threshold: 80, fired: fired, now: now)
+        #expect(outcome.reset.isEmpty)
+        #expect(outcome.fired.isEmpty)
+    }
+
+    @Test func cacheAlertsOnlyForWatchedWarmSessions() {
+        func session(_ id: String, expiresIn: TimeInterval?) -> SessionSnapshot {
+            SessionSnapshot(sessionId: id, accountKey: "k", name: nil, projectDir: "/work/app", model: nil, costUSD: nil,
+                            contextPercentage: nil, process: nil, firstSeenAt: now, updatedAt: now,
+                            cacheExpiresAt: expiresIn.map { now.addingTimeInterval($0) })
+        }
+        let sessions = [session("a", expiresIn: 3600), session("b", expiresIn: 3600),
+                        session("c", expiresIn: 120), session("d", expiresIn: nil)]
+        let due = CacheAlerts.due(sessions, watched: ["a", "c", "d"], now: now)
+        #expect(due == [CacheAlerts.Alert(sessionId: "a", fireAt: now.addingTimeInterval(3600 - CacheAlerts.lead))])
+        #expect(sessions[0].displayName == "app")
+    }
+}
+
 @Suite struct FormattingTests {
     let now = Date(timeIntervalSince1970: 0)
 
@@ -539,6 +643,12 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
     @Test func modelNames() {
         #expect(Formatting.modelName("Opus 5.5 (1M context)") == "Opus 5.5 1M")
         #expect(Formatting.modelName("Sonnet 5.5") == "Sonnet 5.5")
+    }
+
+    @Test func tokens() {
+        #expect(Formatting.tokens(850) == "850")
+        #expect(Formatting.tokens(45_400) == "45k")
+        #expect(Formatting.tokens(1_234_000) == "1.2M")
     }
 
     @Test func ages() {
