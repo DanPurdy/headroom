@@ -1,12 +1,21 @@
+import Charts
 import HeadroomCore
 import SwiftUI
 
-/// Conversations with replies in a recent period, and how much of each plan limit they used in it.
+/// Usage over a recent period, and the conversations with replies in it and what they used.
 struct HistoryPage: View {
     let model: UsageModel
     @AppStorage("historyPeriodHours") private var hours = 24
 
-    private static let periods = [1, 12, 24]
+    private static let periods = [1, 12, 24, 168]
+
+    private static func name(_ hours: Int) -> String {
+        switch hours {
+        case 1: "1 hour"
+        case 168: "7 days"
+        default: "\(hours) hours"
+        }
+    }
 
     var body: some View {
         TimelineView(.everyMinute) { context in
@@ -14,13 +23,15 @@ struct HistoryPage: View {
             let entries = entries(since: start)
             VStack(alignment: .leading, spacing: 10) {
                 Picker("Period", selection: $hours) {
-                    ForEach(Self.periods, id: \.self) { Text("\($0) hour\($0 == 1 ? "" : "s")").tag($0) }
+                    ForEach(Self.periods, id: \.self) { Text(Self.name($0)).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
 
+                charts(start: start, now: context.date)
+
                 if entries.isEmpty {
-                    Text("No replies in the last \(hours == 1 ? "hour" : "\(hours) hours").")
+                    Text("No replies in the last \(hours == 1 ? "hour" : Self.name(hours)).")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 } else {
@@ -35,6 +46,20 @@ struct HistoryPage: View {
                     }
                     .frame(maxHeight: 360)
                     .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func charts(start: Date, now: Date) -> some View {
+        ForEach(model.accounts) { account in
+            let points = UsageSeries.points(model.sessions.filter { $0.accountKey == account.key }, since: start, now: now)
+            if !points.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    if model.accounts.count > 1 {
+                        Text(account.label).font(.caption.weight(.semibold))
+                    }
+                    UsageChart(points: points, start: start, now: now)
                 }
             }
         }
@@ -76,6 +101,38 @@ struct HistoryPage: View {
                                 account: labels[$0.accountKey]) }
             .filter { $0.use != LimitUse() || $0.cost > 0 || $0.lastActive > start }
             .sorted { ($0.use.sevenDay, $0.use.fiveHour, $0.cost) > ($1.use.sevenDay, $1.use.fiveHour, $1.cost) }
+    }
+}
+
+/// 5-hour and weekly usage as steps: each reading holds until the next.
+struct UsageChart: View {
+    let points: [UsageSeries.Point]
+    let start: Date
+    let now: Date
+
+    var body: some View {
+        Chart {
+            ForEach(Array(points.enumerated()), id: \.offset) { _, point in
+                LineMark(x: .value("Time", point.at), y: .value("Used", point.fiveHour), series: .value("Limit", "5-hour"))
+                    .foregroundStyle(by: .value("Limit", "5-hour"))
+                    .interpolationMethod(.stepEnd)
+                LineMark(x: .value("Time", point.at), y: .value("Used", point.sevenDay), series: .value("Limit", "Weekly"))
+                    .foregroundStyle(by: .value("Limit", "Weekly"))
+                    .interpolationMethod(.stepEnd)
+            }
+        }
+        .chartXScale(domain: start...now)
+        .chartYScale(domain: 0...100)
+        .chartForegroundStyleScale(["5-hour": Color.orange, "Weekly": Color.blue])
+        .chartYAxis {
+            AxisMarks(values: [0, 50, 100]) { value in
+                AxisGridLine()
+                AxisValueLabel { Text("\(value.as(Int.self) ?? 0)%") }
+            }
+        }
+        .chartLegend(position: .top, alignment: .leading)
+        .font(.caption2)
+        .frame(height: 80)
     }
 }
 

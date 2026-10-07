@@ -29,6 +29,11 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    func announce(_ release: UpdateCheck.Release) {
+        post(id: "update-\(release.version)", title: "Headroom \(release.version) is available",
+             body: "Open the menu to update.")
+    }
+
     func schedule(_ alerts: [CacheAlerts.Alert], sessions: [SessionSnapshot]) {
         let wanted = Dictionary(alerts.map { ($0.sessionId, $0.fireAt) }, uniquingKeysWith: { first, _ in first })
         if !clearedStale {

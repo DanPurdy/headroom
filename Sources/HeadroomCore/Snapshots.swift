@@ -132,11 +132,12 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     public var cacheExpiresAt: Date?
     /// Tokens the next message re-processes at full price once the cache has gone cold.
     public var recacheTokens: Int?
+    public var cacheHealth: CacheHealth?
 
     public init(sessionId: String, accountKey: String, name: String?, projectDir: String?, model: String?,
                 costUSD: Double?, contextPercentage: Double?, process: ProcessIdentity?, lastReplyAt: Date? = nil,
                 firstSeenAt: Date, updatedAt: Date, samples: [UsageSample]? = nil,
-                cacheExpiresAt: Date? = nil, recacheTokens: Int? = nil) {
+                cacheExpiresAt: Date? = nil, recacheTokens: Int? = nil, cacheHealth: CacheHealth? = nil) {
         self.sessionId = sessionId
         self.accountKey = accountKey
         self.name = name
@@ -151,6 +152,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         self.samples = samples
         self.cacheExpiresAt = cacheExpiresAt
         self.recacheTokens = recacheTokens
+        self.cacheHealth = cacheHealth
     }
 
     public var displayName: String {
@@ -162,7 +164,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     }
 
     /// How far back samples are kept; longer than any period the app shows.
-    public static let costHistory: TimeInterval = 25 * 3600
+    public static let costHistory: TimeInterval = 7 * 24 * 3600 + 3600
 
     /// Estimated spend in this session after `start`, from the samples.
     public func cost(since start: Date) -> Double {
@@ -224,8 +226,51 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
                 let date = Date(timeIntervalSince1970: expires)
                 return input.promptCache?.warm == false ? min(date, now) : date
             },
-            recacheTokens: input.promptCache?.recacheTokensIfCold.map { Int($0) }
+            recacheTokens: input.promptCache?.recacheTokensIfCold.map { Int($0) },
+            cacheHealth: input.promptCache.flatMap(CacheHealth.init)
         )
+    }
+}
+
+/// How well a session's conversation is reusing its prompt cache.
+public struct CacheHealth: Codable, Equatable, Sendable {
+    /// Cache reads as a share of all input this session, 0–1.
+    public var hitRatio: Double?
+    /// Requests that re-processed content the cache should still have held.
+    public var misses: Int
+    public var lastMissAt: Date?
+    /// Claude Code's names for the likely cause of the last miss, e.g. "tools_changed".
+    public var lastMissCauses: [String]
+
+    public init(hitRatio: Double?, misses: Int, lastMissAt: Date?, lastMissCauses: [String]) {
+        self.hitRatio = hitRatio
+        self.misses = misses
+        self.lastMissAt = lastMissAt
+        self.lastMissCauses = lastMissCauses
+    }
+
+    init?(_ cache: StatusLineInput.PromptCache) {
+        guard cache.hitRatio != nil || cache.misses != nil else { return nil }
+        self.init(hitRatio: cache.hitRatio, misses: cache.misses ?? 0,
+                  lastMissAt: cache.lastMissAt.map { Date(timeIntervalSince1970: $0) },
+                  lastMissCauses: cache.lastMissCause?.causes ?? [])
+    }
+
+    /// A miss this recent is worth flagging.
+    public static let recentMiss: TimeInterval = 60 * 60
+
+    public func missedRecently(at now: Date) -> Bool {
+        lastMissAt.map { now.timeIntervalSince($0) < Self.recentMiss } ?? false
+    }
+
+    /// "tools changed", "system prompt changed"; unknown names with underscores as spaces.
+    public static func describe(cause: String) -> String {
+        switch cause {
+        case "ttl_expired_5m": "the 5-minute cache expired"
+        case "ttl_expired_1h": "the 1-hour cache expired"
+        case "likely_server_side": "likely on Anthropic's side"
+        default: cause.replacingOccurrences(of: "_", with: " ")
+        }
     }
 }
 
