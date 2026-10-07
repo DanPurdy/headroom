@@ -32,6 +32,12 @@ public struct StatusLineInput: Decodable, Sendable {
         public var sevenDay: Window?
     }
 
+    public struct PromptCache: Decodable, Sendable {
+        public var warm: Bool?
+        public var expiresAt: Double?
+        public var recacheTokensIfCold: Double?
+    }
+
     public var sessionId: String?
     public var sessionName: String?
     public var transcriptPath: String?
@@ -41,6 +47,7 @@ public struct StatusLineInput: Decodable, Sendable {
     public var cost: Cost?
     public var contextWindow: ContextWindow?
     public var rateLimits: RateLimits?
+    public var promptCache: PromptCache?
 
     public static func decode(_ data: Data) throws -> StatusLineInput {
         let decoder = JSONDecoder()
