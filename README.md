@@ -82,10 +82,10 @@ with an orange "as of" age so you can tell.
 Live also checks an account's usage once an hour and whenever you press ⟳ on its card, so
 it catches use from anywhere: claude.ai, the desktop app, mobile and other machines.
 
-- It reads the login Claude Code saved in your Keychain, but only when you switch Live on or
-  press ⟳, never in the background. macOS may ask first; choose **Always Allow**. Because
-  releases aren't signed with a Developer ID yet, macOS will probably ask again after each
-  update.
+- It asks before you switch it on, and reads the login Claude Code saved in your Keychain
+  only then or when you press ⟳, never in the background. macOS asks for your password each
+  time: Claude Code rewrites its saved login whenever it renews it, which removes Headroom's
+  access, so **Always Allow** doesn't last.
 - The login is kept in memory, not on disk, and the hourly checks reuse it. When it expires,
   or after Headroom restarts, Live pauses until you press ⟳.
 - It sends that login to `https://api.anthropic.com/api/oauth/usage`, the undocumented
@@ -119,11 +119,10 @@ remove the `statusLine` entry from that folder's `settings.json`, or restore the
 
 ## Troubleshooting
 
-- **An account says "Waiting for the first Claude Code reply".** Send a message in Claude
-  Code on that account.
+- **An account says "No usage yet".** Send a message in Claude Code on that account.
 - **My status line disappeared.** The app was moved or deleted. Open Headroom once from its
   new location and it repoints your status lines; otherwise see Uninstall.
-- **Live says it couldn't find Claude Code's saved login.** Log in to Claude Code for that
+- **Live says "No Claude Code login found for this folder".** Log in to Claude Code for that
   folder, e.g. `CLAUDE_CONFIG_DIR=~/.claude-work claude`, then `/login`. Headroom finds the
   saved login using naming that Claude Code doesn't document, so please open an issue if it
   still fails.

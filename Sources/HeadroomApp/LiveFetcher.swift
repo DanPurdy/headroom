@@ -6,9 +6,11 @@ import Security
 /// Fetches live usage for one config dir with the login Claude Code saved in the Keychain.
 ///
 /// Reading that login can make macOS show a permission prompt, and Claude Code's items live in
-/// the legacy login keychain, where there is no supported way to read without risking one. So
-/// the Keychain is only read when the user asks (⟳, or switching Live on). The login is then
-/// kept in memory, and scheduled checks reuse it until it expires.
+/// the legacy login keychain, where there is no supported way to read without risking one. Always
+/// Allow doesn't last either: Claude Code rewrites the item with `security add-generic-password -U`
+/// on every renewal, which drops other apps' access. So the Keychain is only read when the user
+/// asks (⟳, or switching Live on). The login is then kept in memory, and scheduled checks reuse
+/// it until it expires.
 enum LiveFetcher {
     enum Failure: Error {
         case noLogin
@@ -22,13 +24,13 @@ enum LiveFetcher {
 
         var message: String {
             switch self {
-            case .noLogin: "Couldn't find Claude Code's saved login for this folder."
-            case .needsAccess: "Paused. Press ⟳ to resume; macOS may ask you to let Headroom read Claude Code's login."
-            case .expired: "Claude Code's login has expired. It renews next time you use Claude Code on this account."
-            case .rateLimited: "Anthropic is rate limiting usage checks. Trying again later."
-            case .http(let code): "Usage check failed (HTTP \(code))."
-            case .network(let detail): "Usage check failed: \(detail)"
-            case .unreadable: "Usage check returned something unexpected."
+            case .noLogin: "No Claude Code login found for this folder."
+            case .needsAccess: "Paused. Press ⟳ to resume."
+            case .expired: "Login expired. Use Claude Code on this account, then press ⟳."
+            case .rateLimited: "Rate limited. Retrying later."
+            case .http(let code): "Check failed (HTTP \(code))."
+            case .network(let detail): "Check failed: \(detail)"
+            case .unreadable: "Unexpected response."
             }
         }
     }
