@@ -151,8 +151,8 @@ struct AccountCard: View {
 
             if let snapshot = row.snapshot {
                 Group {
-                    LimitBar(title: "5-hour", window: snapshot.fiveHour, now: now)
-                    LimitBar(title: "Weekly", window: snapshot.sevenDay, now: now)
+                    LimitBar(title: "5-hour", window: snapshot.fiveHour, length: LimitWindow.fiveHourLength, now: now)
+                    LimitBar(title: "Weekly", window: snapshot.sevenDay, length: LimitWindow.sevenDayLength, now: now)
                 }
                 .opacity(row.isStale ? 0.5 : 1)
             } else {
@@ -183,10 +183,12 @@ struct AccountCard: View {
 struct LimitBar: View {
     let title: String
     let window: LimitWindow?
+    let length: TimeInterval
     let now: Date
 
     var body: some View {
         let used = min(max(window?.usedPercentage(at: now) ?? 0, 0), 100)
+        let pace = window?.pace(length: length, at: now)
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(title)
@@ -208,9 +210,21 @@ struct LimitBar: View {
                     Capsule()
                         .fill(used >= 90 ? Color.red : Color.orange)
                         .frame(width: geometry.size.width * used / 100)
+                    if let pace {
+                        Rectangle()
+                            .fill(.primary.opacity(0.6))
+                            .frame(width: 1.5, height: 10)
+                            .offset(x: geometry.size.width * min(pace.even, 100) / 100 - 0.75)
+                    }
                 }
             }
             .frame(height: 6)
+            .help(pace.map { "Even pace: \(Formatting.percent($0.even)) by now" } ?? "")
+            if let limitAt = pace?.limitAt {
+                Text("At this rate, limit in \(Formatting.countdown(until: limitAt, from: now))")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
         }
     }
 }
@@ -243,8 +257,40 @@ struct SessionLine: View {
                     .fixedSize()
                     .foregroundStyle(.secondary)
             }
+            cache
         }
         .font(.caption)
         .help(session.projectDir ?? "")
+    }
+
+    @ViewBuilder private var cache: some View {
+        if let expires = session.cacheExpiresAt {
+            let warm = expires > now
+            let soon = warm && expires.timeIntervalSince(now) < Self.coolingAfter
+            Label(warm ? Formatting.countdown(until: expires, from: now) : "cold", systemImage: "flame")
+                .labelStyle(CompactLabel())
+                .monospacedDigit()
+                .fixedSize()
+                .foregroundStyle(soon ? Color.orange : warm ? Color.secondary : Color.secondary.opacity(0.5))
+                .help(cacheHelp(warm: warm, expires: expires))
+        }
+    }
+
+    private func cacheHelp(warm: Bool, expires: Date) -> String {
+        let recache = session.recacheTokens.map { " re-reads \(Formatting.tokens($0)) tokens" } ?? " re-reads the conversation"
+        return warm
+            ? "Cache warm until \(expires.formatted(date: .omitted, time: .shortened)). After that, the next message\(recache) at full price."
+            : "Cache cold. The next message\(recache) at full price."
+    }
+
+    private static let coolingAfter: TimeInterval = 10 * 60
+}
+
+private struct CompactLabel: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 2) {
+            configuration.icon.imageScale(.small)
+            configuration.title
+        }
     }
 }

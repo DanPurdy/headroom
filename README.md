@@ -8,8 +8,13 @@ every Claude Code account on your Mac at once.
 - **5-hour and weekly limits** per account, with reset countdowns. The menu bar shows one
   column per account: its label beside two small bars with percentages, 5-hour on top and
   weekly below.
+- **Pace** for each limit: a marker where usage would be at an even rate, and when you'd hit
+  the limit if you carry on at the rate so far.
 - **Open Claude Code sessions** per account, with model and context used. Sessions that
   haven't replied for 15 minutes are marked idle.
+- **Prompt cache countdown** per session: how long until the conversation's cache goes cold,
+  after which the next message re-reads the whole conversation at full price. Needs Claude
+  Code 2.1.251 or later.
 - **Today's API-equivalent cost** per account, as estimated by Claude Code. It is not what
   your subscription bills.
 - **History** of conversations with replies in the last 1, 12 or 24 hours: how much of the

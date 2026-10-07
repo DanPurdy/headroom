@@ -30,6 +30,15 @@ public enum Formatting {
         name.replacingOccurrences(of: #"\s*\((\S+) context\)"#, with: " $1", options: .regularExpression)
     }
 
+    /// "850", "45k", "1.2M".
+    public static func tokens(_ count: Int) -> String {
+        switch count {
+        case ..<1000: "\(count)"
+        case ..<1_000_000: "\(Int((Double(count) / 1000).rounded()))k"
+        default: String(format: "%.1fM", Double(count) / 1_000_000)
+        }
+    }
+
     public static func usd(_ value: Double) -> String {
         String(format: "$%.2f", value)
     }
