@@ -180,6 +180,7 @@ struct AccountCard: View {
 
             HStack {
                 Text("\(row.activeSessions.count) open session\(row.activeSessions.count == 1 ? "" : "s")")
+                    .help("Each session: model · ctx, context used · 🔥 time until its prompt cache goes cold · ⚠️ cache missed in the last hour")
                 Spacer()
                 Text("\(Formatting.usd(row.costToday)) today")
                     .help("API-equivalent cost, estimated by Claude Code")
@@ -266,6 +267,7 @@ struct SessionLine: View {
             Text(session.displayName)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .help(session.projectDir ?? "")
             Spacer(minLength: 8)
             if let model = session.model {
                 Text(Formatting.modelName(model))
@@ -282,7 +284,6 @@ struct SessionLine: View {
             cache
         }
         .font(.caption)
-        .help(session.projectDir ?? "")
     }
 
     @ViewBuilder private var cache: some View {
@@ -295,12 +296,14 @@ struct SessionLine: View {
                 .monospacedDigit()
                 .fixedSize()
                 .foregroundStyle(soon ? Color.orange : warm ? Color.secondary : Color.secondary.opacity(0.5))
-                .help(cacheHelp(warm: warm, expires: expires))
-            if let toggleWatch {
-                Button(action: toggleWatch) { label }.buttonStyle(.plain)
-            } else {
-                label
+            Group {
+                if let toggleWatch {
+                    Button(action: toggleWatch) { label }.buttonStyle(.plain)
+                } else {
+                    label
+                }
             }
+            .help(cacheHelp(warm: warm, expires: expires))
         }
         if let health = session.cacheHealth, health.missedRecently(at: now), let missedAt = health.lastMissAt {
             Image(systemName: "exclamationmark.triangle.fill")
@@ -312,15 +315,15 @@ struct SessionLine: View {
     private func missHelp(_ health: CacheHealth, at missedAt: Date) -> String {
         let cause = health.lastMissCauses.isEmpty ? "cause unknown"
             : health.lastMissCauses.map(CacheHealth.describe).joined(separator: ", ")
-        return "Cache miss \(Formatting.age(of: missedAt, at: now)): \(cause). The conversation was re-read at full price."
+        return "Cache miss \(Formatting.age(of: missedAt, at: now)) (\(cause)): a message re-read the conversation at full price."
             + (health.hitRatio.map { " Hit rate \(Formatting.percent($0 * 100))." } ?? "")
     }
 
     private func cacheHelp(warm: Bool, expires: Date) -> String {
         let recache = session.recacheTokens.map { " re-reads \(Formatting.tokens($0)) tokens" } ?? " re-reads the conversation"
         let state = warm
-            ? "Cache warm until \(expires.formatted(date: .omitted, time: .shortened)). After that, the next message\(recache) at full price."
-            : "Cache cold. The next message\(recache) at full price."
+            ? "Prompt cache: warm until \(expires.formatted(date: .omitted, time: .shortened)). Reply before then and the conversation is re-read cheaply; after it, the next message\(recache) at full price."
+            : "Prompt cache: cold. The next message\(recache) at full price."
         let stats = session.cacheHealth.flatMap { health in
             health.hitRatio.map { " Hit rate \(Formatting.percent($0 * 100)), \(health.misses) miss\(health.misses == 1 ? "" : "es")." }
         } ?? ""
