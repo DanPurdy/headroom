@@ -68,7 +68,7 @@ struct UsageView: View {
                     .font(.callout)
                 }
                 ForEach(model.accounts) { row in
-                    AccountCard(row: row, now: context.date) { model.refreshLive(configDir: row.configDir) }
+                    AccountCard(row: row, now: context.date) { model.refreshLive(configDir: row.configDir, interactive: true) }
                 }
 
                 if let error = model.lastError {

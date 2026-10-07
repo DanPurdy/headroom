@@ -1,12 +1,21 @@
 import Foundation
 import HeadroomCore
+import os
+import Security
 
 /// Fetches live usage for one config dir with the login Claude Code saved in the Keychain.
-/// Each check reads the login afresh, so it follows Claude Code's renewals. Nothing is kept.
+///
+/// Reading that login can make macOS show a permission prompt, and Claude Code's items live in
+/// the legacy login keychain, where there is no supported way to read without risking one. Always
+/// Allow doesn't last either: Claude Code rewrites the item with `security add-generic-password -U`
+/// on every renewal, which drops other apps' access. So the Keychain is only read when the user
+/// asks (⟳, or switching Live on). The login is then kept in memory, and scheduled checks reuse
+/// it until it expires.
 enum LiveFetcher {
     enum Failure: Error {
         case noLogin
-        case keychain
+        /// A scheduled check needs the Keychain, or the user didn't allow access.
+        case needsAccess
         case expired
         case rateLimited(retryAfter: TimeInterval?)
         case http(Int)
@@ -16,8 +25,8 @@ enum LiveFetcher {
         var message: String {
             switch self {
             case .noLogin: "No Claude Code login found for this folder."
-            case .keychain: "Couldn't read Claude Code's login. Press ⟳ to retry."
-            case .expired: "Login expired. Use Claude Code on this account to renew it."
+            case .needsAccess: "Paused. Press ⟳ to resume."
+            case .expired: "Login expired. Use Claude Code on this account, then press ⟳."
             case .rateLimited: "Rate limited. Retrying later."
             case .http(let code): "Check failed (HTTP \(code))."
             case .network(let detail): "Check failed: \(detail)"
@@ -31,17 +40,31 @@ enum LiveFetcher {
         var plan: String?
     }
 
-    static func fetch(configDir: String) async throws(Failure) -> Result {
-        let login: UsageAPI.Credentials
-        do {
-            login = try ClaudeLogin.read(configDir: configDir)
-        } catch .notFound {
-            throw .noLogin
-        } catch {
-            throw .keychain
+    /// `interactive` is true only when the user asked for this check, so it may read the Keychain.
+    static func fetch(configDir: String, interactive: Bool) async throws(Failure) -> Result {
+        if let login = logins.withLock({ $0[configDir] }), !isExpired(login) {
+            do throws(Failure) {
+                return try await check(login)
+            } catch .expired {
+                forget(configDir: configDir) // Claude Code has moved on to a new login
+            }
         }
-        if login.expiresAt.map({ $0 <= Date() }) ?? false { throw .expired }
+        guard interactive else { throw .needsAccess }
+        let login = try readLogin(configDir: configDir)
+        if isExpired(login) { throw .expired }
+        logins.withLock { $0[configDir] = login }
         return try await check(login)
+    }
+
+    static func forget(configDir: String) {
+        _ = logins.withLock { $0.removeValue(forKey: configDir) }
+    }
+
+    /// Logins read from the Keychain, by config dir. Memory only.
+    private static let logins = OSAllocatedUnfairLock<[String: UsageAPI.Credentials]>(initialState: [:])
+
+    private static func isExpired(_ login: UsageAPI.Credentials) -> Bool {
+        login.expiresAt.map { $0 <= Date() } ?? false
     }
 
     private static func check(_ credentials: UsageAPI.Credentials) async throws(Failure) -> Result {
@@ -68,6 +91,23 @@ enum LiveFetcher {
         }
     }
 
+    /// If several entries could belong to this folder, the one Claude Code renewed last wins.
+    private static func readLogin(configDir: String) throws(Failure) -> UsageAPI.Credentials {
+        var refused = false
+        var candidates: [UsageAPI.Credentials] = []
+        for service in UsageAPI.keychainServices(configDir: configDir) {
+            let (status, data) = readKeychain(service: service)
+            if let credentials = data.flatMap(UsageAPI.parseCredentials) {
+                candidates.append(credentials)
+            } else if status != errSecSuccess, status != errSecItemNotFound {
+                refused = true // denied, or the prompt was dismissed
+            }
+        }
+        guard let login = candidates.max(by: { ($0.expiresAt ?? .distantPast) < ($1.expiresAt ?? .distantPast) })
+        else { throw refused ? .needsAccess : .noLogin }
+        return login
+    }
+
     /// Ephemeral, so neither the response nor the request (with its bearer token) is cached on
     /// disk and no cookies are kept; and redirects are refused, so the token only goes to `url`.
     private static let session = URLSession(configuration: .ephemeral, delegate: NoRedirects(), delegateQueue: nil)
@@ -76,6 +116,24 @@ enum LiveFetcher {
         func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                         newRequest request: URLRequest) async -> URLRequest? {
             nil
+        }
+    }
+
+    /// One read at a time, so macOS never stacks up prompts.
+    private static let keychainQueue = DispatchQueue(label: "io.github.danpurdy.headroom.keychain")
+
+    /// Blocks while macOS shows its permission prompt, so callers stay off the main thread.
+    private static func readKeychain(service: String) -> (OSStatus, Data?) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        return keychainQueue.sync {
+            var result: CFTypeRef?
+            let status = SecItemCopyMatching(query as CFDictionary, &result)
+            return (status, result as? Data)
         }
     }
 }

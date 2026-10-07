@@ -121,7 +121,7 @@ struct SetupRowView: View {
     private func confirmLive() -> Bool {
         let alert = NSAlert()
         alert.messageText = "Turn on Live usage?"
-        alert.informativeText = "Headroom will read this account's Claude Code login from your Keychain and use it to ask Anthropic for your usage, once an hour and when you press ⟳. This also counts claude.ai, the desktop app and other devices.\n\nThe login is never saved or sent anywhere else."
+        alert.informativeText = "Headroom will read this account's Claude Code login from your Keychain and use it to ask Anthropic for your usage, once an hour and when you press ⟳. This also counts claude.ai, the desktop app and other devices.\n\nmacOS will ask for your password. The login is kept in memory only and sent only to Anthropic. When Claude Code renews it, Live pauses until you press ⟳."
         alert.addButton(withTitle: "Turn On")
         alert.addButton(withTitle: "Cancel")
         NSApplication.shared.activate()

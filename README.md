@@ -82,17 +82,17 @@ with an orange "as of" age so you can tell.
 Live also checks an account's usage once an hour and whenever you press ⟳ on its card, so
 it catches use from anywhere: claude.ai, the desktop app, mobile and other machines.
 
-- Nothing is read until you switch Live on for that account and accept the confirmation.
-  If you switched Live on in an earlier version, switch it on again.
-- Each check reads the login Claude Code saved in your Keychain, using Apple's `security`
-  command, the same tool Claude Code saves it with. macOS doesn't ask for your password,
-  and checks carry on after Claude Code renews its login.
-- The login is never saved by Headroom. It is sent only to
-  `https://api.anthropic.com/api/oauth/usage`, the undocumented endpoint behind Claude Code's
-  `/usage`. Being undocumented, it could change without notice.
+- It asks before you switch it on, and reads the login Claude Code saved in your Keychain
+  only then or when you press ⟳, never in the background. macOS asks for your password each
+  time: Claude Code rewrites its saved login whenever it renews it, which removes Headroom's
+  access, so **Always Allow** doesn't last.
+- The login is kept in memory, not on disk, and the hourly checks reuse it. When it expires,
+  or after Headroom restarts, Live pauses until you press ⟳.
+- It sends that login to `https://api.anthropic.com/api/oauth/usage`, the undocumented
+  endpoint behind Claude Code's `/usage`. Being undocumented, it could change without notice.
 - Headroom only reads the login. It never refreshes or replaces it, so it can't log Claude
   Code out. If the saved login has expired, Live says so until Claude Code next runs on that
-  account.
+  account and you press ⟳.
 - If Anthropic rate-limits the check, Headroom waits at least 5 minutes before trying again.
 
 ## Command line
@@ -132,8 +132,6 @@ remove the `statusLine` entry from that folder's `settings.json`, or restore the
 - **"…settings.json is shared with …".** Two Claude Code folders use the same
   `settings.json` (usually a symlink from a dotfiles repo), so Headroom can't tell their
   usage apart. Give each folder its own `settings.json`.
-- **Live says "Couldn't read Claude Code's login".** Usually a locked keychain. Unlock it
-  in Keychain Access, then press ⟳.
 - **Numbers differ from claude.ai by a point.** Claude Code and claude.ai round differently.
 
 ## Develop
@@ -148,7 +146,7 @@ scripts/make-icon.sh     # regenerate the icons after editing assets/icon.svg (n
 ```
 
 - `Sources/HeadroomCore`: everything testable, including status line parsing, snapshots and
-  merging, the settings installer, and reading the Live login and response.
+  merging, the settings installer and Live response parsing.
 - `Sources/headroom`: the command Claude Code runs as its status line.
 - `Sources/HeadroomApp`: the SwiftUI menu bar app.
 

@@ -518,47 +518,6 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         #expect(UsageAPI.keychainServices(configDir: ConfigDir.defaultPath).first == "Claude Code-credentials")
     }
 
-    @Test func readsLoginThroughSecurityTool() throws {
-        let dir = "/Users/me/.claude-work"
-        let service = UsageAPI.keychainServices(configDir: dir)[0]
-        let calls = Calls()
-        let login = try ClaudeLogin.read(configDir: dir) { arguments in
-            calls.append(arguments)
-            return arguments.contains(service)
-                ? (0, Data(#"{"claudeAiOauth":{"accessToken":"t","expiresAt":1791142200000}}"#.utf8) + Data("\n".utf8))
-                : (44, Data())
-        }
-        #expect(login.accessToken == "t")
-        #expect(calls.all.first == ["find-generic-password", "-s", service, "-w"])
-    }
-
-    @Test func newestLoginWins() throws {
-        let services = UsageAPI.keychainServices(configDir: "/Users/me/.claude-work")
-        let login = try ClaudeLogin.read(configDir: "/Users/me/.claude-work") { arguments in
-            let newer = arguments.contains(services[1])
-            return (0, Data(#"{"claudeAiOauth":{"accessToken":"\#(newer ? "new" : "old")","expiresAt":\#(newer ? 2000 : 1000)}}"#.utf8))
-        }
-        #expect(login.accessToken == "new")
-    }
-
-    @Test func missingOrUnreadableLogin() {
-        #expect(throws: ClaudeLogin.Failure.notFound) {
-            try ClaudeLogin.read(configDir: "/Users/me/.claude-work") { _ in (44, Data()) }
-        }
-        #expect(throws: ClaudeLogin.Failure.unreadable(51)) {
-            try ClaudeLogin.read(configDir: "/Users/me/.claude-work") { _ in (51, Data()) }
-        }
-        #expect(throws: ClaudeLogin.Failure.notFound) {
-            try ClaudeLogin.read(configDir: "/Users/me/.claude-work") { _ in (0, Data("not json".utf8)) }
-        }
-    }
-
-    @Test func securityToolReportsMissingItem() {
-        #expect(throws: ClaudeLogin.Failure.notFound) {
-            try ClaudeLogin.read(configDir: "/nonexistent/headroom-test-\(UUID().uuidString)")
-        }
-    }
-
     @Test func retryAfter() {
         #expect(UsageAPI.retryAfter("120") == 120)
         #expect(UsageAPI.retryAfter(nil) == nil)
@@ -594,12 +553,4 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         #expect(ProcessLookup.isRunning(me))
         #expect(!ProcessLookup.isRunning(ProcessIdentity(pid: me.pid, startedAt: me.startedAt.addingTimeInterval(-100))))
     }
-}
-
-private final class Calls: @unchecked Sendable {
-    private let lock = NSLock()
-    private var calls: [[String]] = []
-
-    func append(_ arguments: [String]) { lock.withLock { calls.append(arguments) } }
-    var all: [[String]] { lock.withLock { calls } }
 }
