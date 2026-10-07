@@ -55,6 +55,11 @@ struct UsageView: View {
         }
     }
 
+    private var toggleWatch: ((String) -> Void)? {
+        guard model.notificationsAvailable else { return nil }
+        return { [model] id in model.toggleWatch(id) }
+    }
+
     private var usage: some View {
         // Ticks only while the panel is open, to keep countdowns current.
         TimelineView(.everyMinute) { context in
@@ -68,7 +73,10 @@ struct UsageView: View {
                     .font(.callout)
                 }
                 ForEach(model.accounts) { row in
-                    AccountCard(row: row, now: context.date) { model.refreshLive(configDir: row.configDir, interactive: true) }
+                    AccountCard(row: row, now: context.date, watched: model.watchedSessions,
+                                toggleWatch: toggleWatch) {
+                        model.refreshLive(configDir: row.configDir, interactive: true)
+                    }
                 }
 
                 if let error = model.lastError {
@@ -112,6 +120,8 @@ struct HeaderGlyph: View {
 struct AccountCard: View {
     let row: AccountRow
     let now: Date
+    let watched: Set<String>
+    let toggleWatch: ((String) -> Void)?
     let refresh: () -> Void
 
     var body: some View {
@@ -172,7 +182,8 @@ struct AccountCard: View {
             .foregroundStyle(.secondary)
 
             ForEach(row.activeSessions, id: \.sessionId) { session in
-                SessionLine(session: session, now: now)
+                SessionLine(session: session, now: now, watched: watched.contains(session.sessionId),
+                            toggleWatch: toggleWatch.map { toggle in { toggle(session.sessionId) } })
             }
         }
         .padding(10)
@@ -232,6 +243,8 @@ struct LimitBar: View {
 struct SessionLine: View {
     let session: SessionSnapshot
     let now: Date
+    let watched: Bool
+    let toggleWatch: (() -> Void)?
 
     private var idle: Bool {
         session.lastReplyAt.map { now.timeIntervalSince($0) > UsageModel.idleAfter } ?? true
@@ -241,7 +254,7 @@ struct SessionLine: View {
         HStack(spacing: 6) {
             Circle().fill(idle ? Color.secondary : Color.green).frame(width: 6, height: 6)
                 .help(session.lastReplyAt.map { "Last reply \(Formatting.age(of: $0, at: now))" } ?? "No reply seen yet")
-            Text(session.name ?? session.projectDir.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "session")
+            Text(session.displayName)
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 8)
@@ -267,20 +280,28 @@ struct SessionLine: View {
         if let expires = session.cacheExpiresAt {
             let warm = expires > now
             let soon = warm && expires.timeIntervalSince(now) < Self.coolingAfter
-            Label(warm ? Formatting.countdown(until: expires, from: now) : "cold", systemImage: "flame")
+            let label = Label(warm ? Formatting.countdown(until: expires, from: now) : "cold",
+                              systemImage: watched ? "bell.fill" : "flame")
                 .labelStyle(CompactLabel())
                 .monospacedDigit()
                 .fixedSize()
                 .foregroundStyle(soon ? Color.orange : warm ? Color.secondary : Color.secondary.opacity(0.5))
                 .help(cacheHelp(warm: warm, expires: expires))
+            if let toggleWatch {
+                Button(action: toggleWatch) { label }.buttonStyle(.plain)
+            } else {
+                label
+            }
         }
     }
 
     private func cacheHelp(warm: Bool, expires: Date) -> String {
         let recache = session.recacheTokens.map { " re-reads \(Formatting.tokens($0)) tokens" } ?? " re-reads the conversation"
-        return warm
+        let state = warm
             ? "Cache warm until \(expires.formatted(date: .omitted, time: .shortened)). After that, the next message\(recache) at full price."
             : "Cache cold. The next message\(recache) at full price."
+        guard toggleWatch != nil else { return state }
+        return state + (watched ? "\nClick to stop notifying." : "\nClick to be notified 5 minutes before it goes cold.")
     }
 
     private static let coolingAfter: TimeInterval = 10 * 60

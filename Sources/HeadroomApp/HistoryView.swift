@@ -100,7 +100,7 @@ struct HistoryRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(entry.session.name ?? entry.session.projectDir.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "session")
+                Text(entry.session.displayName)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 8)

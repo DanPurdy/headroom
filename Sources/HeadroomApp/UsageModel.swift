@@ -66,6 +66,11 @@ final class UsageModel {
     /// temporary copy that macOS deletes, so setup is blocked until the app is moved.
     let isTranslocated = Installer.isTranslocated(ExecutablePath.current())
     var lastError: String?
+    /// Percentage at which to notify about a limit; 0 is off.
+    private(set) var alertThreshold = UserDefaults.standard.integer(forKey: UsageModel.alertThresholdKey)
+    /// Sessions to notify about before their prompt cache goes cold.
+    private(set) var watchedSessions = Set(UserDefaults.standard.stringArray(forKey: UsageModel.watchedKey) ?? [])
+    var notificationsAvailable: Bool { Notifier.shared != nil }
 
     @ObservationIgnored private let store = SnapshotStore()
     @ObservationIgnored private let installer = Installer()
@@ -80,6 +85,9 @@ final class UsageModel {
     static let idleAfter: TimeInterval = 15 * 60
     private static let liveDefaultsKey = "liveConfigDirs"
     private static let addedDefaultsKey = "addedConfigDirs"
+    private static let alertThresholdKey = "alertThreshold"
+    private static let watchedKey = "watchedCacheSessions"
+    private static let firedAlertsKey = "firedLimitAlerts"
 
     @ObservationIgnored private var addedDirs: [String] = UserDefaults.standard.stringArray(forKey: UsageModel.addedDefaultsKey) ?? []
 
@@ -156,6 +164,58 @@ final class UsageModel {
     func setLaunchAtLogin(_ enabled: Bool) {
         perform { enabled ? try SMAppService.mainApp.register() : try SMAppService.mainApp.unregister() }
         launchAtLogin = SMAppService.mainApp.status == .enabled
+    }
+
+    // MARK: - Notifications
+
+    func setAlertThreshold(_ threshold: Int) {
+        whenNotificationsAllowed(enabling: threshold > 0) { [self] in
+            alertThreshold = threshold
+            UserDefaults.standard.set(threshold, forKey: Self.alertThresholdKey)
+            reload()
+        }
+    }
+
+    func toggleWatch(_ sessionId: String) {
+        let watching = !watchedSessions.contains(sessionId)
+        whenNotificationsAllowed(enabling: watching) { [self] in
+            if watching { watchedSessions.insert(sessionId) } else { watchedSessions.remove(sessionId) }
+            UserDefaults.standard.set(Array(watchedSessions), forKey: Self.watchedKey)
+            reload()
+        }
+    }
+
+    /// Asks macOS for permission the first time something is switched on.
+    private func whenNotificationsAllowed(enabling: Bool, _ apply: @escaping @MainActor () -> Void) {
+        guard enabling, let notifier = Notifier.shared else { return apply() }
+        Task {
+            if await notifier.requestPermission() {
+                lastError = nil
+                apply()
+            } else {
+                lastError = "Allow notifications for Headroom in System Settings → Notifications."
+            }
+        }
+    }
+
+    private func updateNotifications() {
+        guard let notifier = Notifier.shared else { return }
+        let fired = (UserDefaults.standard.dictionary(forKey: Self.firedAlertsKey) as? [String: Double] ?? [:])
+            .mapValues { Date(timeIntervalSince1970: $0) }
+        let outcome = LimitAlerts.evaluate(lastSnapshots, threshold: alertThreshold > 0 ? Double(alertThreshold) : nil,
+                                           fired: fired, now: now)
+        notifier.deliver(outcome)
+        if outcome.fired != fired {
+            UserDefaults.standard.set(outcome.fired.mapValues(\.timeIntervalSince1970), forKey: Self.firedAlertsKey)
+        }
+
+        let known = Set(lastSessions.map(\.sessionId))
+        if !watchedSessions.isSubset(of: known) {
+            watchedSessions.formIntersection(known)
+            UserDefaults.standard.set(Array(watchedSessions), forKey: Self.watchedKey)
+        }
+        let active = accounts.flatMap(\.activeSessions)
+        notifier.schedule(CacheAlerts.due(active, watched: watchedSessions, now: now), sessions: active)
     }
 
     // MARK: - Live usage
@@ -246,6 +306,7 @@ final class UsageModel {
         lastSessions = store.sessions()
         refreshRows()
         watchProcesses(lastSessions.filter { $0.process.map(ProcessLookup.isRunning) ?? false })
+        updateNotifications()
         scheduleWake()
     }
 
