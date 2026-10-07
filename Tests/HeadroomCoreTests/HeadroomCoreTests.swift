@@ -572,6 +572,63 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
     }
 }
 
+@Suite struct Alerts {
+    let now = Date(timeIntervalSince1970: 1738420000)
+
+    func account(fiveHour: Double, resetsIn: TimeInterval = 3600) -> AccountSnapshot {
+        AccountSnapshot(key: "k", label: "Work", configDir: "/x",
+                        fiveHour: LimitWindow(usedPercentage: fiveHour, resetsAt: now.addingTimeInterval(resetsIn)),
+                        sevenDay: LimitWindow(usedPercentage: 10, resetsAt: now.addingTimeInterval(86400)), updatedAt: now)
+    }
+
+    @Test func alertsOncePerWindowWhenCrossingThreshold() {
+        let first = LimitAlerts.evaluate([account(fiveHour: 85)], threshold: 80, fired: [:], now: now)
+        #expect(first.crossed.map(\.window) == [.fiveHour])
+        #expect(first.crossed.first?.label == "Work")
+        // Same window, a few seconds' jitter in the reset time: no repeat.
+        let jittered = account(fiveHour: 92, resetsIn: 3603)
+        let second = LimitAlerts.evaluate([jittered], threshold: 80, fired: first.fired, now: now.addingTimeInterval(60))
+        #expect(second.crossed.isEmpty)
+        #expect(second.fired == first.fired)
+    }
+
+    @Test func belowThresholdOrOffDoesNothing() {
+        #expect(LimitAlerts.evaluate([account(fiveHour: 79)], threshold: 80, fired: [:], now: now) == .init())
+        #expect(LimitAlerts.evaluate([account(fiveHour: 99)], threshold: nil, fired: [:], now: now) == .init())
+    }
+
+    @Test func announcesResetOnceThenAlertsInTheNextWindow() {
+        let fired = LimitAlerts.evaluate([account(fiveHour: 85)], threshold: 80, fired: [:], now: now).fired
+        let afterReset = now.addingTimeInterval(3601)
+        let reset = LimitAlerts.evaluate([account(fiveHour: 85)], threshold: 80, fired: fired, now: afterReset)
+        #expect(reset.reset.map(\.window) == [.fiveHour])
+        #expect(reset.crossed.isEmpty) // the old reading reads as 0% once its window has reset
+        #expect(reset.fired.isEmpty)
+        let nextWindow = account(fiveHour: 81, resetsIn: 5 * 3600)
+        #expect(LimitAlerts.evaluate([nextWindow], threshold: 80, fired: reset.fired, now: afterReset).crossed.count == 1)
+    }
+
+    @Test func staleResetIsDroppedQuietly() {
+        let fired = [LimitAlerts.key("k", .fiveHour): now.addingTimeInterval(-2 * 3600)]
+        let outcome = LimitAlerts.evaluate([account(fiveHour: 5, resetsIn: 3 * 3600)], threshold: 80, fired: fired, now: now)
+        #expect(outcome.reset.isEmpty)
+        #expect(outcome.fired.isEmpty)
+    }
+
+    @Test func cacheAlertsOnlyForWatchedWarmSessions() {
+        func session(_ id: String, expiresIn: TimeInterval?) -> SessionSnapshot {
+            SessionSnapshot(sessionId: id, accountKey: "k", name: nil, projectDir: "/work/app", model: nil, costUSD: nil,
+                            contextPercentage: nil, process: nil, firstSeenAt: now, updatedAt: now,
+                            cacheExpiresAt: expiresIn.map { now.addingTimeInterval($0) })
+        }
+        let sessions = [session("a", expiresIn: 3600), session("b", expiresIn: 3600),
+                        session("c", expiresIn: 120), session("d", expiresIn: nil)]
+        let due = CacheAlerts.due(sessions, watched: ["a", "c", "d"], now: now)
+        #expect(due == [CacheAlerts.Alert(sessionId: "a", fireAt: now.addingTimeInterval(3600 - CacheAlerts.lead))])
+        #expect(sessions[0].displayName == "app")
+    }
+}
+
 @Suite struct FormattingTests {
     let now = Date(timeIntervalSince1970: 0)
 

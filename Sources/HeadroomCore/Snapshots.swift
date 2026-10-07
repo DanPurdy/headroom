@@ -153,6 +153,10 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         self.recacheTokens = recacheTokens
     }
 
+    public var displayName: String {
+        name ?? projectDir.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "session"
+    }
+
     public func isCacheWarm(at now: Date) -> Bool {
         cacheExpiresAt.map { $0 > now } ?? false
     }

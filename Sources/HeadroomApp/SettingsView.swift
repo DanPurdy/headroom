@@ -40,6 +40,20 @@ struct SettingsPage: View {
                 .controlSize(.small)
                 .font(.callout)
 
+            if model.notificationsAvailable {
+                Picker("Usage alerts", selection: Binding(get: { model.alertThreshold },
+                                                          set: { model.setAlertThreshold($0) })) {
+                    Text("Off").tag(0)
+                    Text("At 80%").tag(80)
+                    Text("At 90%").tag(90)
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
+                .controlSize(.small)
+                .font(.callout)
+                .help("Notify when a limit passes this, and again when it resets")
+            }
+
             Divider()
 
             HStack {
