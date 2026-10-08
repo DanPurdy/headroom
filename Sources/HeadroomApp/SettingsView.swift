@@ -45,14 +45,16 @@ struct SettingsPage: View {
                                                           set: { model.setChecksForUpdates($0) }))
                     .toggleStyle(.switch)
                     .help("Asks GitHub for the latest release once a day")
-                Button(model.checkingForUpdates ? "Checking…" : "Check now", action: model.checkForUpdatesNow)
-                    .disabled(model.checkingForUpdates)
                 if let update = model.update {
-                    Button(model.updating ? "Updating…" : "Update to \(update.version)", action: model.installUpdate)
+                    Button(model.updating ? "Updating…" : "Update now", action: model.installUpdate)
                         .disabled(model.updating)
-                        .help("Download it, replace this copy and reopen Headroom")
-                } else if let result = model.updateCheckResult {
-                    Text(result).foregroundStyle(.secondary)
+                        .help("Install \(update.version) and reopen Headroom")
+                } else {
+                    Button(model.checkingForUpdates ? "Checking…" : "Check now", action: model.checkForUpdatesNow)
+                        .disabled(model.checkingForUpdates)
+                    if let result = model.updateCheckResult {
+                        Text(result).foregroundStyle(.secondary)
+                    }
                 }
             }
             .controlSize(.small)
