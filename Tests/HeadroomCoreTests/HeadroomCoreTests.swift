@@ -760,6 +760,13 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         #expect(Formatting.modelName("Sonnet 5.5") == "Sonnet 5.5")
     }
 
+    @Test func limits() {
+        let window = LimitWindow(usedPercentage: 30, resetsAt: now.addingTimeInterval(3 * 3600 + 39 * 60))
+        #expect(Formatting.limit(window, at: now) == "30% used, resets in 3h 39m")
+        #expect(Formatting.limit(window, at: window.resetsAt.addingTimeInterval(5 * 60)) == "0% used, reset 5m ago")
+        #expect(Formatting.limit(window, at: window.resetsAt) == "0% used, reset just now")
+    }
+
     @Test func tokens() {
         #expect(Formatting.tokens(850) == "850")
         #expect(Formatting.tokens(45_400) == "45k")

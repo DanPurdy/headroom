@@ -75,7 +75,7 @@ func status() {
         print("\(account.label)  (\(account.configDir), updated \(Formatting.age(of: account.updatedAt, at: now)))")
         for (name, window) in [("5-hour", account.fiveHour), ("weekly", account.sevenDay)] {
             guard let window else { print("  \(name): no data"); continue }
-            print("  \(name): \(Formatting.percent(window.usedPercentage(at: now))) used, resets in \(Formatting.countdown(until: window.resetsAt, from: now))")
+            print("  \(name): \(Formatting.limit(window, at: now))")
         }
     }
     let active = store.sessions().filter { $0.process.map(ProcessLookup.isRunning) ?? false }
