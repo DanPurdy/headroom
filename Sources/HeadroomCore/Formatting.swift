@@ -46,6 +46,11 @@ public enum Formatting {
         }
     }
 
+    /// "£0.00" for GBP in a British locale.
+    public static func money(_ amount: Decimal, _ currency: String, locale: Locale = .current) -> String {
+        amount.formatted(.currency(code: currency).locale(locale))
+    }
+
     public static func usd(_ value: Double) -> String {
         String(format: "$%.2f", value)
     }

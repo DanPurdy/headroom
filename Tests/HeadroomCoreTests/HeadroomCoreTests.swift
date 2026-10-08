@@ -557,6 +557,41 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         #expect(usage.sevenDay == nil)
     }
 
+    /// Trimmed from a real response, October 2026.
+    static let fullResponse = #"""
+    {"five_hour":{"utilization":20.0,"resets_at":"2026-10-08T10:00:00.351394+00:00"},
+     "seven_day":{"utilization":3.0,"resets_at":"2026-10-15T02:00:00.351423+00:00"},
+     "seven_day_opus":null,"iguana_necktie":{"utilization":0.0,"resets_at":"2026-11-05T07:59:00+00:00"},
+     "limits":[
+      {"kind":"session","group":"session","percent":20,"resets_at":"2026-10-08T10:00:00.351394+00:00","scope":null},
+      {"kind":"weekly_all","group":"weekly","percent":3,"resets_at":"2026-10-15T02:00:00.351423+00:00","scope":null},
+      {"kind":"weekly_scoped","group":"weekly","percent":4,"resets_at":"2026-10-15T02:00:00.351648+00:00",
+       "scope":{"model":{"id":null,"display_name":"Fable"},"surface":null}}],
+     "spend":{"used":{"amount_minor":1234,"currency":"GBP","exponent":2},
+              "limit":{"amount_minor":5000,"currency":"GBP","exponent":2},"enabled":true},
+     "seven_day_breakdown":{"rows":[{"key":"claude_code","display_name":"Claude Code","percent":100},
+                                    {"key":"chat","display_name":"Chats","percent":0}]}}
+    """#
+
+    @Test func parsesScopedLimitsSpendAndBreakdown() throws {
+        let usage = try UsageAPI.parseUsage(Data(Self.fullResponse.utf8))
+        #expect(usage.fiveHour?.usedPercentage == 20)
+        #expect(usage.scoped == [ScopedLimit(name: "Fable", window: LimitWindow(usedPercentage: 4,
+            resetsAt: try #require(UsageAPI.parseDate("2026-10-15T02:00:00+00:00"))), length: LimitWindow.sevenDayLength)])
+        #expect(usage.extraUsage == ExtraUsage(used: Decimal(string: "12.34")!, limit: 50, currency: "GBP"))
+        #expect(usage.weeklyBreakdown == [UsageShare(name: "Claude Code", percent: 100), UsageShare(name: "Chats", percent: 0)])
+    }
+
+    @Test func extraUsageOffOrUncappedAndUnnamedScopes() {
+        #expect(UsageAPI.extraUsage(["enabled": false, "used": ["amount_minor": 0, "currency": "GBP"]]) == nil)
+        #expect(UsageAPI.extraUsage(["enabled": true, "used": ["amount_minor": 0, "currency": "GBP", "exponent": 2],
+                                     "limit": NSNull()])?.limit == nil)
+        let unnamed = UsageAPI.scopedLimits([["kind": "monthly_thing", "group": "monthly", "percent": 5,
+                                              "resets_at": "2026-11-01T00:00:00+00:00", "scope": NSNull()]])
+        #expect(unnamed.map(\.name) == ["monthly thing"])
+        #expect(unnamed.first?.length == nil)
+    }
+
     @Test func parsesCredentials() {
         let creds = UsageAPI.parseCredentials(Data(#"{"claudeAiOauth":{"accessToken":"t","refreshToken":"r","expiresAt":1791142200000,"subscriptionType":"max"}}"#.utf8))
         #expect(creds == UsageAPI.Credentials(accessToken: "t", expiresAt: Date(timeIntervalSince1970: 1791142200), subscriptionType: "max"))
@@ -720,6 +755,49 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
     }
 }
 
+@Suite struct LiveHistory {
+    let now = Date(timeIntervalSince1970: 1738420000)
+
+    func reading(_ minutesAgo: Double, _ fiveHour: Double) -> UsageSample {
+        UsageSample(at: now.addingTimeInterval(-minutesAgo * 60), usd: nil,
+                    fiveHour: LimitWindow(usedPercentage: fiveHour, resetsAt: now.addingTimeInterval(3600)))
+    }
+
+    @Test func statusLineReadingsKeepLiveOnlyFields() {
+        let live = AccountSnapshot(key: "k", label: "Work", configDir: "/x", fiveHour: nil, sevenDay: nil, updatedAt: now,
+                                   scoped: [ScopedLimit(name: "Fable", window: LimitWindow(usedPercentage: 4, resetsAt: now), length: nil)],
+                                   extraUsage: ExtraUsage(used: 0, limit: nil, currency: "GBP"),
+                                   liveSamples: [reading(5, 10)])
+        let statusLine = AccountSnapshot(key: "k", label: "Work", configDir: "/x",
+                                         fiveHour: LimitWindow(usedPercentage: 12, resetsAt: now.addingTimeInterval(3600)),
+                                         sevenDay: nil, updatedAt: now)
+        let merged = live.merging(statusLine)
+        #expect(merged.scoped == live.scoped)
+        #expect(merged.extraUsage == live.extraUsage)
+        #expect(merged.liveSamples == live.liveSamples)
+        #expect(merged.fiveHour?.usedPercentage == 12)
+    }
+
+    @Test func liveSamplesArePrunedLikeSessionSamples() {
+        let old = UsageSample(at: now.addingTimeInterval(-SessionSnapshot.costHistory - 60), usd: nil)
+        let kept = AccountSnapshot.liveSamples([old, reading(30, 5)], adding: reading(0, 8), now: now)
+        #expect(kept.map(\.at) == [now.addingTimeInterval(-30 * 60), now])
+    }
+
+    @Test func useSeenFirstByLiveIsNotCreditedToTheNextReply() {
+        func session(_ id: String, _ samples: [UsageSample]) -> SessionSnapshot {
+            SessionSnapshot(sessionId: id, accountKey: "k", name: nil, projectDir: nil, model: nil, costUSD: nil,
+                            contextPercentage: nil, process: nil, firstSeenAt: now, updatedAt: now, samples: samples)
+        }
+        // A reply at 10%, then claude.ai use that Live sees at 30%, then a reply at 32%.
+        let sessions = [session("a", [reading(50, 10), reading(10, 32)])]
+        let start = now.addingTimeInterval(-3600)
+        #expect(LimitAttribution.use(of: sessions, since: start)["a"]?.fiveHour == 22)
+        #expect(LimitAttribution.use(of: sessions, live: ["k": [reading(30, 30)]], since: start)["a"]?.fiveHour == 2)
+        #expect(UsageSeries.points(sessions, live: [reading(30, 30)], since: start, now: now).map(\.fiveHour) == [10, 30, 32, 32])
+    }
+}
+
 @Suite struct Updates {
     @Test func comparesVersions() {
         #expect(UpdateCheck.isNewer("0.5.0", than: "0.4.1"))
@@ -765,6 +843,10 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         #expect(Formatting.limit(window, at: now) == "30% used, resets in 3h 39m")
         #expect(Formatting.limit(window, at: window.resetsAt.addingTimeInterval(5 * 60)) == "0% used, reset 5m ago")
         #expect(Formatting.limit(window, at: window.resetsAt) == "0% used, reset just now")
+    }
+
+    @Test func money() {
+        #expect(Formatting.money(Decimal(string: "12.34")!, "GBP", locale: Locale(identifier: "en_GB")) == "£12.34")
     }
 
     @Test func tokens() {

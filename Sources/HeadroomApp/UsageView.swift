@@ -168,9 +168,24 @@ struct AccountCard: View {
             if let snapshot = row.snapshot {
                 Group {
                     LimitBar(title: "5-hour", period: "the 5 hours", window: snapshot.fiveHour, length: LimitWindow.fiveHourLength, now: now)
-                    LimitBar(title: "Weekly", period: "the week", window: snapshot.sevenDay, length: LimitWindow.sevenDayLength, now: now)
+                    LimitBar(title: "Weekly", period: "the week", window: snapshot.sevenDay, length: LimitWindow.sevenDayLength,
+                             now: now, note: snapshot.weeklyBreakdown.map { shares in
+                                 "This week: " + shares.map { "\($0.name) \(Formatting.percent($0.percent))" }.joined(separator: " · ")
+                             })
+                    ForEach(snapshot.scoped ?? [], id: \.name) { limit in
+                        LimitBar(title: "\(limit.name) weekly", period: "the week", window: limit.window,
+                                 length: limit.length ?? 0, now: now,
+                                 note: "\(limit.name)'s own limit, on top of the weekly limit for all models")
+                    }
                 }
                 .opacity(row.isStale ? 0.5 : 1)
+                if let extra = snapshot.extraUsage {
+                    Text(extra.limit.map { "Extra usage \(Formatting.money(extra.used, extra.currency)) of \(Formatting.money($0, extra.currency)) this month" }
+                         ?? "Extra usage on · \(Formatting.money(extra.used, extra.currency)) used this month")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .help("Pay-as-you-go credits that cover you when you hit your plan limits")
+                }
             } else {
                 Text("No usage yet")
                     .font(.caption)
@@ -205,6 +220,8 @@ struct LimitBar: View {
     let window: LimitWindow?
     let length: TimeInterval
     let now: Date
+    /// Added to the tooltip.
+    var note: String?
 
     var body: some View {
         let used = min(max(window?.usedPercentage(at: now) ?? 0, 0), 100)
@@ -246,7 +263,8 @@ struct LimitBar: View {
             }
         }
         .contentShape(Rectangle())
-        .help(pace.map { "The line marks how much of \(period) has passed (\(Formatting.percent($0.even))). Past it, you're on course to run out before the reset." } ?? "")
+        .help(([note] + [pace.map { "The line marks how much of \(period) has passed (\(Formatting.percent($0.even))). Past it, you're on course to run out before the reset." }])
+            .compactMap { $0 }.joined(separator: "\n"))
     }
 }
 

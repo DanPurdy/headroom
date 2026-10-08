@@ -3,19 +3,26 @@
 # Headroom
 
 A macOS menu bar app that shows how much of your Claude plan's limits you've used, for
-every Claude Code account on your Mac at once.
+every Claude Code account on your Mac at once. More at
+[dpurdy.me/apps/headroom](https://dpurdy.me/apps/headroom/).
+
+<img src="assets/screenshots/usage.png" width="340" alt="The Headroom menu: one card per account with 5-hour and weekly bars, pace lines, reset countdowns, today's cost, and open sessions with prompt cache countdowns">
 
 - **5-hour and weekly limits** per account, with reset countdowns. The menu bar shows one
   column per account: its label beside two small bars with percentages, 5-hour on top and
   weekly below.
 - **Pace** for each limit: a line showing how much of the window has passed, and when you'd
   run out if you carry on at the rate so far.
+
+  <img src="assets/screenshots/pace.png" width="312" alt="A 5-hour bar at 38%, ahead of its pace line, and a weekly bar at 61%, with a note that it will run out in 2 days 10 hours at this rate">
 - **Open Claude Code sessions** per account, with model and context used. Sessions that
   haven't replied for 15 minutes are marked idle.
 - **Prompt cache countdown** per session: how long until the conversation's cache goes cold,
   after which the next message re-reads the whole conversation at full price. Click it to be
   notified 5 minutes before. A warning marks a session whose cache missed in the last hour,
   with Claude Code's guess at why. Needs Claude Code 2.1.251 or later.
+
+  <img src="assets/screenshots/cache.png" width="312" alt="Three open sessions: one with 47 minutes of cache left and a warning, one being watched with 4 minutes left, and one with a cold cache">
 - **Usage alerts** (optional): a notification when a limit passes 80% or 90%, and again when
   it resets.
 - **Today's API-equivalent cost** per account, as estimated by Claude Code. It is not what
@@ -23,8 +30,12 @@ every Claude Code account on your Mac at once.
 - **History** for the last 1, 12 or 24 hours or 7 days: a chart of each account's 5-hour and
   weekly usage, and the conversations with replies in that time, with how much of each limit
   they used.
+
+  <img src="assets/screenshots/history.png" width="340" alt="The History page over 7 days, with a usage chart per account, totals, and each conversation's share of the limits">
 - **Optional Live usage** per account, which also catches use from claude.ai, the desktop
-  app and other devices.
+  app and other devices, and adds what claude.ai's usage page shows beyond the two limits: a
+  model's own weekly limit (such as Fable's), your extra usage this month, and where this
+  week's usage went.
 - **Update notifications**: Headroom checks GitHub for a new release once a day, and can
   install it from the menu.
 
@@ -93,7 +104,9 @@ with an orange "as of" age so you can tell.
 ### Live usage (optional, per account)
 
 Live also checks an account's usage once an hour and whenever you press ⟳ on its card, so
-it catches use from anywhere: claude.ai, the desktop app, mobile and other machines.
+it catches use from anywhere: claude.ai, the desktop app, mobile and other machines. Its
+readings go into History too, so use from elsewhere isn't counted against the next Claude
+Code conversation.
 
 - It asks before you switch it on, and reads the login Claude Code saved in your Keychain
   only then or when you press ⟳, never in the background. macOS asks for your password each
