@@ -40,12 +40,25 @@ struct SettingsPage: View {
                 .controlSize(.small)
                 .font(.callout)
 
-            Toggle("Check for updates", isOn: Binding(get: { model.checksForUpdates },
-                                                      set: { model.setChecksForUpdates($0) }))
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .font(.callout)
-                .help("Asks GitHub for the latest release once a day")
+            HStack {
+                Toggle("Check for updates", isOn: Binding(get: { model.checksForUpdates },
+                                                          set: { model.setChecksForUpdates($0) }))
+                    .toggleStyle(.switch)
+                    .help("Asks GitHub for the latest release once a day")
+                if let update = model.update {
+                    Button(model.updating ? "Updating…" : "Update now", action: model.installUpdate)
+                        .disabled(model.updating)
+                        .help("Install \(update.version) and reopen Headroom")
+                } else {
+                    Button(model.checkingForUpdates ? "Checking…" : "Check now", action: model.checkForUpdatesNow)
+                        .disabled(model.checkingForUpdates)
+                    if let result = model.updateCheckResult {
+                        Text(result).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .controlSize(.small)
+            .font(.callout)
 
             if model.notificationsAvailable {
                 Picker("Usage alerts", selection: Binding(get: { model.alertThreshold },
