@@ -74,6 +74,9 @@ final class UsageModel {
     /// A newer release, once a check has found one.
     private(set) var update: UpdateCheck.Release?
     private(set) var updating = false
+    /// What the last "Check now" found, shown beside the button.
+    private(set) var updateCheckResult: String?
+    private(set) var checkingForUpdates = false
     private(set) var checksForUpdates = UserDefaults.standard.object(forKey: UsageModel.checkUpdatesKey) as? Bool ?? true
 
     @ObservationIgnored private let store = SnapshotStore()
@@ -256,16 +259,38 @@ final class UsageModel {
         return last.addingTimeInterval(UpdateCheck.interval)
     }
 
+    func checkForUpdatesNow() {
+        guard !checkingForUpdates else { return }
+        checkingForUpdates = true
+        updateCheckResult = nil
+        runUpdateCheck { [self] result in
+            checkingForUpdates = false
+            switch result {
+            case .newer(let release): updateCheckResult = "\(release.version) available"
+            case .upToDate: updateCheckResult = "Up to date (\(Updater.currentVersion ?? "?"))"
+            case .unreachable: updateCheckResult = "Couldn't reach GitHub"
+            }
+        }
+    }
+
     private func checkForUpdatesIfDue() {
         guard let due = nextUpdateCheck, due <= Date() else { return }
+        runUpdateCheck { _ in }
+    }
+
+    private func runUpdateCheck(then report: @escaping @MainActor (Updater.CheckResult) -> Void) {
         UserDefaults.standard.set(Date(), forKey: Self.lastUpdateCheckKey)
+        scheduleWake()
         Task {
-            guard let release = await Updater.newerRelease(), checksForUpdates else { return }
-            update = release
-            if UserDefaults.standard.string(forKey: Self.announcedUpdateKey) != release.version {
-                UserDefaults.standard.set(release.version, forKey: Self.announcedUpdateKey)
-                Notifier.shared?.announce(release)
+            let result = await Updater.check()
+            if case .newer(let release) = result {
+                update = release
+                if UserDefaults.standard.string(forKey: Self.announcedUpdateKey) != release.version {
+                    UserDefaults.standard.set(release.version, forKey: Self.announcedUpdateKey)
+                    Notifier.shared?.announce(release)
+                }
             }
+            report(result)
         }
     }
 

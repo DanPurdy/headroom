@@ -22,18 +22,22 @@ enum Updater {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
     }
 
-    /// The latest release if it's newer than this copy, nil otherwise or when GitHub can't be reached.
-    static func newerRelease() async -> UpdateCheck.Release? {
-        guard let current = currentVersion else { return nil }
+    enum CheckResult {
+        case newer(UpdateCheck.Release)
+        case upToDate
+        case unreachable
+    }
+
+    static func check() async -> CheckResult {
+        guard let current = currentVersion else { return .unreachable }
         var request = URLRequest(url: UpdateCheck.latestURL, timeoutInterval: 20)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("Headroom/\(current)", forHTTPHeaderField: "User-Agent")
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200,
-              let release = UpdateCheck.parse(data),
-              UpdateCheck.isNewer(release.version, than: current)
-        else { return nil }
-        return release
+              let release = UpdateCheck.parse(data)
+        else { return .unreachable }
+        return UpdateCheck.isNewer(release.version, than: current) ? .newer(release) : .upToDate
     }
 
     /// Downloads and checks the release, then hands over to a helper that swaps the app once this
