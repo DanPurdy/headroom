@@ -21,6 +21,13 @@ public enum Formatting {
         return "\(minutes / 1440)d ago"
     }
 
+    /// "30% used, resets in 3h 39m", or "0% used, reset 5m ago" once the window is over.
+    public static func limit(_ window: LimitWindow, at now: Date) -> String {
+        window.resetsAt > now
+            ? "\(percent(window.usedPercentage)) used, resets in \(countdown(until: window.resetsAt, from: now))"
+            : "0% used, reset \(age(of: window.resetsAt, at: now))"
+    }
+
     public static func percent(_ value: Double) -> String {
         "\(Int(value.rounded()))%"
     }
