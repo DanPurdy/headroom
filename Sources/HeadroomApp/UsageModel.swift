@@ -331,10 +331,16 @@ final class UsageModel {
             state.paused = false
             state.plan = fetched.plan
             let label = installer.record(for: configDir)?.label ?? ConfigDir.defaultLabel(for: configDir)
+            let now = Date()
+            let usage = fetched.usage
+            let existing = store.account(key: ConfigDir.key(for: configDir))
+            let sample = UsageSample(at: now, usd: nil, fiveHour: usage.fiveHour, sevenDay: usage.sevenDay)
             let incoming = AccountSnapshot(key: ConfigDir.key(for: configDir), label: label, configDir: configDir,
-                                           fiveHour: fetched.usage.fiveHour, sevenDay: fetched.usage.sevenDay,
-                                           updatedAt: Date())
-            let merged = store.account(key: incoming.key)?.merging(incoming) ?? incoming
+                                           fiveHour: usage.fiveHour, sevenDay: usage.sevenDay, updatedAt: now,
+                                           scoped: usage.scoped, extraUsage: usage.extraUsage,
+                                           weeklyBreakdown: usage.weeklyBreakdown,
+                                           liveSamples: AccountSnapshot.liveSamples(existing?.liveSamples, adding: sample, now: now))
+            let merged = existing?.merging(incoming) ?? incoming
             try? store.write(merged) // the directory watcher reloads
         case .failure(let failure):
             state.error = failure.message

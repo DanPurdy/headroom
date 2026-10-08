@@ -53,7 +53,8 @@ struct HistoryPage: View {
 
     @ViewBuilder private func charts(start: Date, now: Date) -> some View {
         ForEach(model.accounts) { account in
-            let points = UsageSeries.points(model.sessions.filter { $0.accountKey == account.key }, since: start, now: now)
+            let points = UsageSeries.points(model.sessions.filter { $0.accountKey == account.key },
+                                            live: account.snapshot?.liveSamples ?? [], since: start, now: now)
             if !points.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
                     if model.accounts.count > 1 {
@@ -95,7 +96,8 @@ struct HistoryPage: View {
 
     private func entries(since start: Date) -> [HistoryEntry] {
         let labels = Dictionary(model.accounts.map { ($0.key, $0.label) }, uniquingKeysWith: { first, _ in first })
-        let use = LimitAttribution.use(of: model.sessions, since: start)
+        let live = Dictionary(model.accounts.map { ($0.key, $0.snapshot?.liveSamples ?? []) }, uniquingKeysWith: { first, _ in first })
+        let use = LimitAttribution.use(of: model.sessions, live: live, since: start)
         return model.sessions
             .map { HistoryEntry(session: $0, use: use[$0.sessionId] ?? LimitUse(), cost: $0.cost(since: start),
                                 account: labels[$0.accountKey]) }

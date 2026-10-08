@@ -62,18 +62,31 @@ public struct AccountSnapshot: Codable, Equatable, Sendable {
     public var sevenDay: LimitWindow?
     /// When the freshest reading was measured (that session's last reply), not when we received it.
     public var updatedAt: Date
+    /// From Live only: limits beyond the two above, e.g. a model's own weekly limit.
+    public var scoped: [ScopedLimit]?
+    public var extraUsage: ExtraUsage?
+    /// This week's usage by where it was spent, e.g. Claude Code or chats.
+    public var weeklyBreakdown: [UsageShare]?
+    /// Readings from Live's checks, kept like session samples so charts and History include them.
+    public var liveSamples: [UsageSample]?
 
     /// Readings older than this may miss usage from elsewhere, so the UI marks them.
     public static let staleAfter: TimeInterval = 30 * 60
 
     public init(key: String, label: String, configDir: String,
-                fiveHour: LimitWindow?, sevenDay: LimitWindow?, updatedAt: Date) {
+                fiveHour: LimitWindow?, sevenDay: LimitWindow?, updatedAt: Date,
+                scoped: [ScopedLimit]? = nil, extraUsage: ExtraUsage? = nil, weeklyBreakdown: [UsageShare]? = nil,
+                liveSamples: [UsageSample]? = nil) {
         self.key = key
         self.label = label
         self.configDir = configDir
         self.fiveHour = fiveHour
         self.sevenDay = sevenDay
         self.updatedAt = updatedAt
+        self.scoped = scoped
+        self.extraUsage = extraUsage
+        self.weeklyBreakdown = weeklyBreakdown
+        self.liveSamples = liveSamples
     }
 
     /// `nil` when the input carries no `rate_limits` yet (before the session's first
@@ -86,16 +99,66 @@ public struct AccountSnapshot: Codable, Equatable, Sendable {
     }
 
     /// Combines readings from any number of sessions, in any order, keeping the newest of each
-    /// window. A window missing from `incoming` tells us nothing, so the existing one stays.
+    /// window. A window missing from `incoming` tells us nothing, so the existing one stays, and
+    /// so do the Live-only fields when `incoming` is a status line reading.
     public func merging(_ incoming: AccountSnapshot) -> AccountSnapshot {
         AccountSnapshot(key: key, label: incoming.label, configDir: incoming.configDir,
                         fiveHour: LimitWindow.newer(fiveHour, incoming.fiveHour),
                         sevenDay: LimitWindow.newer(sevenDay, incoming.sevenDay),
-                        updatedAt: max(updatedAt, incoming.updatedAt))
+                        updatedAt: max(updatedAt, incoming.updatedAt),
+                        scoped: incoming.scoped ?? scoped,
+                        extraUsage: incoming.extraUsage ?? extraUsage,
+                        weeklyBreakdown: incoming.weeklyBreakdown ?? weeklyBreakdown,
+                        liveSamples: incoming.liveSamples ?? liveSamples)
+    }
+
+    /// `samples` with `sample` added, dropping those older than session samples are kept for.
+    public static func liveSamples(_ samples: [UsageSample]?, adding sample: UsageSample, now: Date) -> [UsageSample] {
+        let cutoff = now.addingTimeInterval(-SessionSnapshot.costHistory)
+        return ((samples ?? []) + [sample]).filter { $0.at > cutoff }.sorted { $0.at < $1.at }
     }
 
     public func isStale(at now: Date) -> Bool {
         now.timeIntervalSince(updatedAt) > Self.staleAfter
+    }
+}
+
+/// A limit Live reports beyond the 5-hour and weekly ones, such as one model's weekly limit.
+public struct ScopedLimit: Codable, Equatable, Sendable {
+    /// Anthropic's name for what it covers, e.g. "Fable".
+    public var name: String
+    public var window: LimitWindow
+    /// The window's span when known: weekly or 5-hour.
+    public var length: TimeInterval?
+
+    public init(name: String, window: LimitWindow, length: TimeInterval?) {
+        self.name = name
+        self.window = window
+        self.length = length
+    }
+}
+
+/// Pay-as-you-go credits that cover usage beyond the plan's limits.
+public struct ExtraUsage: Codable, Equatable, Sendable {
+    public var used: Decimal
+    /// The monthly cap, if one is set.
+    public var limit: Decimal?
+    public var currency: String
+
+    public init(used: Decimal, limit: Decimal?, currency: String) {
+        self.used = used
+        self.limit = limit
+        self.currency = currency
+    }
+}
+
+public struct UsageShare: Codable, Equatable, Sendable {
+    public var name: String
+    public var percent: Double
+
+    public init(name: String, percent: Double) {
+        self.name = name
+        self.percent = percent
     }
 }
 
@@ -316,18 +379,24 @@ public enum LimitAttribution {
     ///
     /// Use from elsewhere (claude.ai, other devices) lands on the next Claude Code reply, and
     /// the first reading Headroom ever sees for an account has nothing to compare with.
-    public static func use(of sessions: [SessionSnapshot], since start: Date) -> [String: LimitUse] {
+    ///
+    /// `live` holds Live's readings by account key. A rise first seen by Live is use from
+    /// elsewhere, so it's credited to no session rather than to the next Claude Code reply.
+    public static func use(of sessions: [SessionSnapshot], live: [String: [UsageSample]] = [:],
+                           since start: Date) -> [String: LimitUse] {
         var result: [String: LimitUse] = [:]
-        for account in Dictionary(grouping: sessions, by: \.accountKey).values {
-            let replies = account
-                .flatMap { session in (session.samples ?? []).map { (id: session.sessionId, sample: $0) } }
+        let byAccount = Dictionary(grouping: sessions, by: \.accountKey)
+        for key in Set(byAccount.keys).union(live.keys) {
+            let replies = ((byAccount[key] ?? [])
+                .flatMap { session in (session.samples ?? []).map { (id: Optional(session.sessionId), sample: $0) } }
+                + (live[key] ?? []).map { (id: String?.none, sample: $0) })
                 .sorted { $0.sample.at < $1.sample.at }
             var fiveHour: LimitWindow?
             var sevenDay: LimitWindow?
             for (id, sample) in replies {
                 let fiveHourRise = rise(sample.fiveHour, after: &fiveHour)
                 let sevenDayRise = rise(sample.sevenDay, after: &sevenDay)
-                guard sample.at > start else { continue }
+                guard sample.at > start, let id else { continue }
                 result[id, default: LimitUse()].fiveHour += fiveHourRise
                 result[id, default: LimitUse()].sevenDay += sevenDayRise
             }

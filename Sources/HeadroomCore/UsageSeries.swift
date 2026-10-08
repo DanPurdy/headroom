@@ -11,8 +11,9 @@ public enum UsageSeries {
     /// The account's usage after each of its sessions' replies since `start`, in time order, with
     /// a drop to 0% wherever a window resets, and a final point at `now`. Each point is the
     /// newest reading known by then, so a late report from an idle session can't pull it back.
-    public static func points(_ sessions: [SessionSnapshot], since start: Date, now: Date) -> [Point] {
-        let samples = sessions.flatMap { $0.samples ?? [] }.sorted { $0.at < $1.at }
+    public static func points(_ sessions: [SessionSnapshot], live: [UsageSample] = [], since start: Date,
+                              now: Date) -> [Point] {
+        let samples = (sessions.flatMap { $0.samples ?? [] } + live).sorted { $0.at < $1.at }
         var fiveHour: LimitWindow?
         var sevenDay: LimitWindow?
         var points: [Point] = []
