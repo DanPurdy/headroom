@@ -47,7 +47,11 @@ struct SettingsPage: View {
                     .help("Asks GitHub for the latest release once a day")
                 Button(model.checkingForUpdates ? "Checking…" : "Check now", action: model.checkForUpdatesNow)
                     .disabled(model.checkingForUpdates)
-                if let result = model.updateCheckResult {
+                if let update = model.update {
+                    Button(model.updating ? "Updating…" : "Update to \(update.version)", action: model.installUpdate)
+                        .disabled(model.updating)
+                        .help("Download it, replace this copy and reopen Headroom")
+                } else if let result = model.updateCheckResult {
                     Text(result).foregroundStyle(.secondary)
                 }
             }
