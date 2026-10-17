@@ -46,6 +46,14 @@ public struct SnapshotStore: Sendable {
         return removed
     }
 
+    /// Deletes an account's file and those of its sessions.
+    public func removeAccount(key: String) {
+        try? FileManager.default.removeItem(at: accountURL(key))
+        for session in sessions() where session.accountKey == key {
+            try? FileManager.default.removeItem(at: sessionURL(session.sessionId))
+        }
+    }
+
     /// Deletes session files not updated within `age`. Returns how many were removed.
     @discardableResult
     public func pruneSessions(olderThan age: TimeInterval, now: Date = Date()) -> Int {

@@ -98,3 +98,43 @@ public enum ConfigDir {
         return found
     }
 }
+
+/// A Codex home (`~/.codex`, or whatever `CODEX_HOME` points at). Like a Claude Code config dir,
+/// each one is logged into its own account. Its accounts share `ConfigDir.key`.
+public enum CodexHome {
+    public static var defaultPath: String {
+        NSHomeDirectory() + "/.codex"
+    }
+
+    /// `.codex` -> "Codex", `.codex-work` -> "Codex Work".
+    public static func defaultLabel(for path: String) -> String {
+        let name = URL(fileURLWithPath: ConfigDir.normalize(path)).lastPathComponent
+        let suffix = name.hasPrefix(".codex") ? String(name.dropFirst(".codex".count)) : name
+        let trimmed = suffix.trimmingCharacters(in: CharacterSet(charactersIn: "-_."))
+        return trimmed.isEmpty ? "Codex" : "Codex " + trimmed.prefix(1).uppercased() + trimmed.dropFirst()
+    }
+
+    public static func sessions(in home: String) -> URL {
+        URL(fileURLWithPath: ConfigDir.normalize(home), isDirectory: true).appendingPathComponent("sessions", isDirectory: true)
+    }
+
+    /// `~/.codex` plus any `~/.codex-*` directories with a `sessions` folder, plus `CODEX_HOME` if set.
+    public static func detect(home: String = NSHomeDirectory(),
+                              environment: [String: String] = ProcessInfo.processInfo.environment) -> [String] {
+        let fm = FileManager.default
+        var found: [String] = []
+        let names = (try? fm.contentsOfDirectory(atPath: home)) ?? []
+        for name in names.sorted() where name == ".codex" || name.hasPrefix(".codex-") {
+            var isDir: ObjCBool = false
+            let path = home + "/" + name
+            if fm.fileExists(atPath: path + "/sessions", isDirectory: &isDir), isDir.boolValue {
+                found.append(ConfigDir.normalize(path))
+            }
+        }
+        if let env = environment["CODEX_HOME"], !env.isEmpty {
+            let path = ConfigDir.normalize(env)
+            if !found.contains(path) { found.append(path) }
+        }
+        return found
+    }
+}

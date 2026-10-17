@@ -6,6 +6,12 @@ public enum UsageSeries {
         public var at: Date
         public var fiveHour: Double
         public var sevenDay: Double
+
+        public init(at: Date, fiveHour: Double, sevenDay: Double) {
+            self.at = at
+            self.fiveHour = fiveHour
+            self.sevenDay = sevenDay
+        }
     }
 
     /// The account's usage after each of its sessions' replies since `start`, in time order, with

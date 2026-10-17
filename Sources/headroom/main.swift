@@ -78,7 +78,8 @@ func status() {
             print("  \(name): \(Formatting.limit(window, at: now))")
         }
     }
-    let active = store.sessions().filter { $0.process.map(ProcessLookup.isRunning) ?? false }
+    let openCodex = ProcessLookup.openCodexRollouts()
+    let active = store.sessions().filter { openCodex[$0.sessionId] != nil || ($0.process.map(ProcessLookup.isRunning) ?? false) }
     print("\nActive sessions: \(active.count)")
     for session in active {
         let project = session.projectDir.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "?"

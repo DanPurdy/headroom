@@ -868,3 +868,203 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         #expect(!ProcessLookup.isRunning(ProcessIdentity(pid: me.pid, startedAt: me.startedAt.addingTimeInterval(-100))))
     }
 }
+
+@Suite struct CodexRollouts {
+    static let id = "01a149d3-67c3-7720-85a4-9f54c1866b5a"
+
+    static func meta(source: String = #""cli""#) -> String {
+        #"{"timestamp":"2026-10-17T12:26:12.059Z","type":"session_meta","payload":{"id":"\#(id)","timestamp":"2026-10-17T12:25:53.890Z","cwd":"/work/app","source":\#(source),"base_instructions":{"text":"…"}}}"#
+    }
+
+    static let turn = #"{"timestamp":"2026-10-17T12:26:13.000Z","type":"turn_context","payload":{"cwd":"/work/app","model":"gpt-5.2-codex"}}"#
+
+    /// A `token_count` event; `info` null is how Codex reports limits before the first response.
+    static func tokens(at time: String, primary: Double, secondary: Double, limitId: String? = "codex",
+                       name: String? = nil, info: Bool = true, plan: String = "plus") -> String {
+        let infoJSON = info ? #"{"last_token_usage":{"total_tokens":47500},"model_context_window":475000}"# : "null"
+        let id = limitId.map { #""limit_id":"\#($0)","# } ?? ""
+        let limitName = name.map { #""\#($0)""# } ?? "null"
+        return #"{"timestamp":"\#(time)","type":"event_msg","payload":{"type":"token_count","info":\#(infoJSON),"rate_limits":{\#(id)"limit_name":\#(limitName),"primary":{"used_percent":\#(primary),"window_minutes":300,"resets_at":1792257974},"secondary":{"used_percent":\#(secondary),"window_minutes":10080,"resets_at":1792844774},"credits":null,"plan_type":"\#(plan)"}}}"#
+    }
+
+    static func rollout(_ lines: [String]) -> CodexRollout {
+        var rollout = CodexRollout()
+        for line in lines { rollout.apply(line: Data(line.utf8)) }
+        return rollout
+    }
+
+    @Test func readsSessionModelAndLimits() {
+        let rollout = Self.rollout([Self.meta(), Self.turn,
+                                    Self.tokens(at: "2026-10-17T12:26:14.000Z", primary: 0, secondary: 0, info: false),
+                                    Self.tokens(at: "2026-10-17T12:27:28.881Z", primary: 1, secondary: 0)])
+        #expect(rollout.sessionId == Self.id)
+        #expect(rollout.cwd == "/work/app")
+        #expect(rollout.model == "gpt-5.2-codex")
+        #expect(rollout.plan == "plus")
+        #expect(rollout.isSubagent == false)
+        #expect(rollout.contextPercentage == 10)
+        #expect(rollout.startedAt == UsageAPI.parseDate("2026-10-17T12:25:53Z"))
+        #expect(rollout.lastReplyAt == UsageAPI.parseDate("2026-10-17T12:27:28Z"))
+        #expect(rollout.samples.count == 2)
+        #expect(rollout.samples.last?.fiveHour == LimitWindow(usedPercentage: 1, resetsAt: Date(timeIntervalSince1970: 1792257974)))
+        #expect(rollout.samples.last?.sevenDay?.resetsAt == Date(timeIntervalSince1970: 1792844774))
+    }
+
+    @Test func unchangedReadingsAddNoSampleButStillDateTheLimits() {
+        let rollout = Self.rollout([Self.tokens(at: "2026-10-17T12:27:00Z", primary: 1, secondary: 0),
+                                    Self.tokens(at: "2026-10-17T12:28:00Z", primary: 1, secondary: 0)])
+        #expect(rollout.samples.count == 1)
+        #expect(rollout.limitsAt == UsageAPI.parseDate("2026-10-17T12:28:00Z"))
+    }
+
+    @Test func otherLimitsAreKeptApartAndEmptyOnesIgnored() {
+        let premium = #"{"timestamp":"2026-10-17T12:29:00Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"premium","primary":null,"secondary":null,"plan_type":"plus"}}}"#
+        let rollout = Self.rollout([Self.tokens(at: "2026-10-17T12:27:00Z", primary: 3, secondary: 1),
+                                    Self.tokens(at: "2026-10-17T12:28:00Z", primary: 9, secondary: 4, limitId: "codex_bengalfox", name: "Spark"),
+                                    premium])
+        #expect(rollout.samples.count == 1)
+        #expect(rollout.samples.last?.fiveHour?.usedPercentage == 3)
+        #expect(Array(rollout.otherLimits.keys) == ["codex_bengalfox"])
+        #expect(rollout.otherLimits["codex_bengalfox"]?.name == "Spark")
+        #expect(rollout.otherLimits["codex_bengalfox"]?.sevenDay?.usedPercentage == 4)
+    }
+
+    @Test func olderCodexWithoutLimitIdIsTheMainLimit() {
+        let rollout = Self.rollout([Self.tokens(at: "2026-03-07T22:33:11Z", primary: 5, secondary: 2, limitId: nil, info: false)])
+        #expect(rollout.samples.last?.fiveHour?.usedPercentage == 5)
+        #expect(rollout.lastReplyAt == nil) // no response yet
+    }
+
+    @Test func recognisesSubagentsAndIgnoresOtherLines() {
+        let quoted = #"{"timestamp":"2026-10-17T12:30:00Z","type":"response_item","payload":{"type":"message","content":"look for \"token_count\" lines"}}"#
+        let rollout = Self.rollout([Self.meta(source: #"{"subagent":{"other":"guardian"}}"#), quoted, "not json"])
+        #expect(rollout.isSubagent)
+        #expect(rollout.samples.isEmpty)
+    }
+
+    @Test func sessionIdFromFileName() {
+        #expect(CodexRollout.sessionId(fromFileName: "rollout-2026-10-17T13-25-53-\(Self.id).jsonl") == Self.id)
+        #expect(CodexRollout.sessionId(fromFileName: "rollout-2026-10-17.jsonl") == nil)
+        #expect(CodexRollout.sessionId(fromFileName: "history.jsonl") == nil)
+    }
+
+    @Test func readerReadsOnlyWholeNewLines() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("rollout-\(UUID().uuidString).jsonl")
+        let first = Self.tokens(at: "2026-10-17T12:27:00Z", primary: 1, secondary: 0)
+        let second = Self.tokens(at: "2026-10-17T12:28:00Z", primary: 2, secondary: 0)
+        try Data((Self.meta() + "\n" + first + "\n" + second.prefix(40)).utf8).write(to: url)
+        let reader = CodexRolloutReader(path: url.path)
+        #expect(reader.update()?.samples.count == 1)
+
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data((second.dropFirst(40) + "\n").utf8))
+        try handle.close()
+        #expect(reader.update()?.samples.count == 2)
+        #expect(reader.update()?.samples.last?.fiveHour?.usedPercentage == 2)
+
+        try Data((Self.meta() + "\n").utf8).write(to: url) // replaced by a shorter file
+        #expect(reader.update()?.samples.isEmpty == true)
+    }
+}
+
+@Suite struct CodexImporting {
+    let now = Date(timeIntervalSince1970: 1792250000) // within the fixture windows
+
+    func home(_ files: [String: [String]], index: String? = nil) throws -> String {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("codex-\(UUID().uuidString)")
+        let day = home.appendingPathComponent("sessions/2026/10/17")
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        for (id, lines) in files {
+            try (lines.joined(separator: "\n") + "\n").write(to: day.appendingPathComponent("rollout-2026-10-17T13-25-53-\(id).jsonl"),
+                                                              atomically: true, encoding: .utf8)
+        }
+        if let index { try index.write(to: home.appendingPathComponent("session_index.jsonl"), atomically: true, encoding: .utf8) }
+        return home.path
+    }
+
+    @Test func writesAccountAndSessionLikeTheStatusLine() throws {
+        let id = CodexRollouts.id
+        let dir = try home([id: [CodexRollouts.meta(), CodexRollouts.turn,
+                                 CodexRollouts.tokens(at: "2026-10-17T12:27:00Z", primary: 1, secondary: 0),
+                                 CodexRollouts.tokens(at: "2026-10-17T12:28:00Z", primary: 2, secondary: 1)]],
+                           index: #"{"id":"\#(id)","thread_name":"Old name"}"# + "\n" + #"{"id":"\#(id)","thread_name":"Fix login"}"#)
+        let importer = CodexImporter(store: SnapshotStore(paths: tempPaths()))
+        importer.importRecent(home: dir, label: "Codex", since: .distantPast, now: now)
+
+        let account = try #require(importer.store.account(key: ConfigDir.key(for: dir)))
+        #expect(account.label == "Codex")
+        #expect(account.plan == "plus")
+        #expect(account.fiveHour?.usedPercentage == 2)
+        #expect(account.sevenDay?.usedPercentage == 1)
+        #expect(account.updatedAt == UsageAPI.parseDate("2026-10-17T12:28:00Z"))
+        let session = try #require(importer.store.session(id: id))
+        #expect(session.accountKey == account.key)
+        #expect(session.displayName == "Fix login")
+        #expect(session.model == "gpt-5.2-codex")
+        #expect(session.costUSD == nil)
+        #expect(session.samples?.count == 2)
+        #expect(LimitAttribution.use(of: [session], since: .distantPast)[id] == LimitUse(fiveHour: 1, sevenDay: 1))
+    }
+
+    @Test func subagentsCountForTheAccountButAreNoSession() throws {
+        let id = "01a149d5-3722-7560-999b-c2d86878e148"
+        let dir = try home([id: [CodexRollouts.meta(source: #"{"subagent":{"other":"guardian"}}"#),
+                                 CodexRollouts.tokens(at: "2026-10-17T12:27:00Z", primary: 7, secondary: 3)]])
+        let importer = CodexImporter(store: SnapshotStore(paths: tempPaths()))
+        importer.importRecent(home: dir, label: "Codex", since: .distantPast, now: now)
+        #expect(importer.store.sessions().isEmpty)
+        #expect(importer.store.account(key: ConfigDir.key(for: dir))?.fiveHour?.usedPercentage == 7)
+    }
+
+    @Test func modelLimitsMergeAcrossSessionsAndDropOnceReset() {
+        let window = { (used: Double, resets: Double) in LimitWindow(usedPercentage: used, resetsAt: Date(timeIntervalSince1970: resets)) }
+        let old = [ScopedLimit(name: "Spark", window: window(5, 1792844774), length: LimitWindow.sevenDayLength),
+                   ScopedLimit(name: "Gone", window: window(50, 1772429673), length: LimitWindow.sevenDayLength)]
+        let merged = CodexImporter.scoped(old, adding: ["codex_bengalfox": .init(name: "Spark", fiveHour: window(9, 1792257974),
+                                                                                 sevenDay: window(8, 1792844774))], now: now)
+        #expect(merged?.map(\.id) == ["Spark-604800.0", "Spark-18000.0"])
+        #expect(merged?.first?.window.usedPercentage == 8)
+        #expect(CodexImporter.scoped(nil, adding: [:], now: now) == nil)
+    }
+
+    @Test func importsOnlyRolloutsChangedSinceLastTime() throws {
+        let id = CodexRollouts.id
+        let dir = try home([id: [CodexRollouts.meta(), CodexRollouts.tokens(at: "2026-10-17T12:27:00Z", primary: 1, secondary: 0)]])
+        let store = SnapshotStore(paths: tempPaths())
+        CodexImporter(store: store).importRecent(home: dir, label: "Codex", since: .distantPast, now: now)
+        var session = try #require(store.session(id: id))
+        session.name = "kept"
+        try store.write(session)
+        // A new importer (the app restarted) skips the unchanged file.
+        CodexImporter(store: store).importRecent(home: dir, label: "Codex", since: .distantPast, now: now)
+        #expect(store.session(id: id)?.name == "kept")
+    }
+
+    @Test func removingAnAccountRemovesItsSessions() throws {
+        let dir = try home([CodexRollouts.id: [CodexRollouts.meta(), CodexRollouts.tokens(at: "2026-10-17T12:27:00Z", primary: 1, secondary: 0)]])
+        let store = SnapshotStore(paths: tempPaths())
+        CodexImporter(store: store).importRecent(home: dir, label: "Codex", since: .distantPast, now: now)
+        try store.write(SessionSnapshot(sessionId: "claude", accountKey: "other", name: nil, projectDir: nil, model: nil,
+                                        costUSD: nil, contextPercentage: nil, process: nil, firstSeenAt: now, updatedAt: now))
+        store.removeAccount(key: ConfigDir.key(for: dir))
+        #expect(store.accounts().isEmpty)
+        #expect(store.sessions().map(\.sessionId) == ["claude"])
+    }
+}
+
+@Suite struct CodexHomes {
+    @Test func labels() {
+        #expect(CodexHome.defaultLabel(for: "/Users/me/.codex") == "Codex")
+        #expect(CodexHome.defaultLabel(for: "/Users/me/.codex-work") == "Codex Work")
+    }
+
+    @Test func detectsHomesWithSessions() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("home-\(UUID().uuidString)")
+        for dir in [".codex/sessions", ".codex-work/sessions", ".codex-empty", ".claude/projects"] {
+            try FileManager.default.createDirectory(at: home.appendingPathComponent(dir), withIntermediateDirectories: true)
+        }
+        let found = CodexHome.detect(home: home.path, environment: ["CODEX_HOME": "/elsewhere/codex"])
+        #expect(found.map { URL(fileURLWithPath: $0).lastPathComponent } == [".codex", ".codex-work", "codex"])
+    }
+}

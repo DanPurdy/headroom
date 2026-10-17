@@ -14,9 +14,17 @@ struct HeadroomApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusPanel: StatusPanel?
+    private var guide: SetupGuideWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusPanel = StatusPanel(model: UsageModel())
+        let model = UsageModel()
+        let panel = StatusPanel(model: model)
+        let guide = SetupGuideWindow(model: model) { panel.open() }
+        model.showGuide = { guide.show() }
+        statusPanel = panel
+        self.guide = guide
+        // A menu bar app is easy to miss, so the first launch opens the setup guide.
+        if model.showsWelcome { guide.show() }
     }
 }
 
@@ -59,7 +67,7 @@ final class StatusPanel: NSObject {
         panel.isVisible ? close() : open()
     }
 
-    private func open() {
+    func open() {
         // Built on each open and dropped on close, so nothing (e.g. countdown timers) runs while hidden.
         let root = UsageView(model: model)
             .fixedSize()

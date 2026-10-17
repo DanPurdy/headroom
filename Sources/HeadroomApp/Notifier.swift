@@ -23,6 +23,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
     }
 
+    func isAllowed() async -> Bool {
+        await center.notificationSettings().authorizationStatus == .authorized
+    }
+
     func deliver(_ outcome: LimitAlerts.Outcome) {
         for notice in LimitAlerts.notices(for: outcome, now: Date()) {
             post(id: notice.id, title: notice.title, body: notice.body)
