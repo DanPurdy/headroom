@@ -13,8 +13,18 @@ struct AccountRow: Identifiable {
     var costToday: Double
     var isStale: Bool
     var live: LiveState?
+    /// Read from Codex's session logs rather than Claude Code's status line.
+    var isCodex = false
 
     var id: String { key }
+}
+
+struct CodexRow: Identifiable {
+    var home: String
+    var label: String
+    var isTracked: Bool
+
+    var id: String { home }
 }
 
 struct SetupRow: Identifiable {
@@ -50,13 +60,20 @@ struct LiveState {
 }
 
 /// Everything the menu shows. Nothing here polls: it reloads when a snapshot file changes or a
-/// tracked Claude Code process exits, and wakes once at the next precomputed moment (a limit
+/// tracked Claude Code or Codex process exits, and wakes once at the next precomputed moment (a limit
 /// reset, data going stale, midnight, or a live check falling due).
 @MainActor
 @Observable
 final class UsageModel {
     private(set) var accounts: [AccountRow] = []
     private(set) var setupRows: [SetupRow] = []
+    private(set) var codexRows: [CodexRow] = []
+    /// First launch, before anything is connected: the setup guide opens.
+    private(set) var showsWelcome = false
+    /// nil until asked.
+    private(set) var notificationsAllowed: Bool?
+    /// Opens the setup guide; set by the app delegate.
+    @ObservationIgnored var showGuide: @MainActor () -> Void = {}
     private(set) var now = Date()
     private(set) var launchAtLogin = SMAppService.mainApp.status == .enabled
     private(set) var live: [String: LiveState] = [:]
@@ -86,12 +103,20 @@ final class UsageModel {
     @ObservationIgnored private var processSources: [ProcessIdentity: DispatchSourceProcess] = [:]
     @ObservationIgnored private var wakeTimer: Timer?
     @ObservationIgnored private var pendingReload: DispatchWorkItem?
+    @ObservationIgnored private lazy var codexImporter = CodexImporter(store: store)
+    /// Codex rollouts are read here, off the main thread.
+    @ObservationIgnored private let codexQueue = DispatchQueue(label: "io.github.danpurdy.headroom.codex", qos: .utility)
+    @ObservationIgnored private var codexWatchers: [String: FileEventWatcher] = [:]
+    /// Open Codex sessions by session ID, with the process holding each one's rollout open.
+    @ObservationIgnored private var openCodex: [String: ProcessIdentity] = [:]
 
     static let sessionRetention: TimeInterval = 7 * 24 * 3600
     /// A session that hasn't replied for this long is shown as idle.
     static let idleAfter: TimeInterval = 15 * 60
     private static let liveDefaultsKey = "liveConfigDirs"
     private static let addedDefaultsKey = "addedConfigDirs"
+    private static let codexDefaultsKey = "codexHomes"
+    private static let welcomeDoneKey = "welcomeDone"
     private static let alertThresholdKey = "alertThreshold"
     private static let watchedKey = "watchedCacheSessions"
     private static let firedAlertsKey = "firedLimitAlerts"
@@ -100,6 +125,8 @@ final class UsageModel {
     private static let announcedUpdateKey = "announcedUpdate"
 
     @ObservationIgnored private var addedDirs: [String] = UserDefaults.standard.stringArray(forKey: UsageModel.addedDefaultsKey) ?? []
+    /// Tracked Codex homes and their labels.
+    @ObservationIgnored private var codexHomes: [String: String] = UserDefaults.standard.dictionary(forKey: UsageModel.codexDefaultsKey) as? [String: String] ?? [:]
 
     init() {
         try? store.paths.ensureDirectories()
@@ -115,6 +142,12 @@ final class UsageModel {
             DirectoryWatcher(url: dir) { [weak self] in
                 MainActor.assumeIsolated { self?.scheduleReload() }
             }
+        }
+        watchCodex()
+        // Someone who set Headroom up before the welcome existed has nothing to be welcomed to.
+        if !UserDefaults.standard.bool(forKey: Self.welcomeDoneKey) {
+            showsWelcome = installer.records().isEmpty && codexHomes.isEmpty
+            if !showsWelcome { UserDefaults.standard.set(true, forKey: Self.welcomeDoneKey) }
         }
         reload()
         runDueLiveChecks()
@@ -172,9 +205,62 @@ final class UsageModel {
         perform { try installer.uninstall(configDir: configDir) }
     }
 
+    func finishWelcome() {
+        showsWelcome = false
+        UserDefaults.standard.set(true, forKey: Self.welcomeDoneKey)
+    }
+
     func setLaunchAtLogin(_ enabled: Bool) {
         perform { enabled ? try SMAppService.mainApp.register() : try SMAppService.mainApp.unregister() }
         launchAtLogin = SMAppService.mainApp.status == .enabled
+    }
+
+    // MARK: - Codex
+
+    /// Starts reading a Codex home's session logs, or renames one already tracked.
+    func trackCodex(home: String, label: String) {
+        let trimmed = label.trimmingCharacters(in: .whitespaces)
+        let label = trimmed.isEmpty ? CodexHome.defaultLabel(for: home) : trimmed
+        codexHomes[home] = label
+        UserDefaults.standard.set(codexHomes, forKey: Self.codexDefaultsKey)
+        if var account = store.account(key: ConfigDir.key(for: home)), account.label != label {
+            account.label = label
+            try? store.write(account)
+        }
+        codexWatchers[home] = nil // recreated with the new label
+        watchCodex()
+        reload()
+    }
+
+    /// Stops reading a Codex home and removes what was read from it. Codex's own files are untouched.
+    func untrackCodex(home: String) {
+        codexHomes[home] = nil
+        UserDefaults.standard.set(codexHomes, forKey: Self.codexDefaultsKey)
+        codexWatchers[home] = nil
+        codexQueue.async { [codexImporter, store] in
+            codexImporter.forget(home: home)
+            store.removeAccount(key: ConfigDir.key(for: home)) // the directory watchers reload
+        }
+        reload()
+    }
+
+    /// Imports each tracked home's last week of rollouts, then whatever Codex writes to them.
+    private func watchCodex() {
+        let importer = codexImporter
+        let since = Date().addingTimeInterval(-Self.sessionRetention)
+        for (home, label) in codexHomes where codexWatchers[home] == nil {
+            codexWatchers[home] = FileEventWatcher(url: URL(fileURLWithPath: home), queue: codexQueue) { paths in
+                if paths.contains(where: { $0.hasSuffix("/session_index.jsonl") }) {
+                    // A thread was named: update the sessions read lately.
+                    importer.importRecent(home: home, label: label, since: Date().addingTimeInterval(-24 * 3600))
+                }
+                for path in Set(paths) where path.contains("/sessions/")
+                    && CodexRollout.sessionId(fromFileName: (path as NSString).lastPathComponent) != nil {
+                    try? importer.importRollout(at: path, home: home, label: label)
+                }
+            }
+            codexQueue.async { importer.importRecent(home: home, label: label, since: since) }
+        }
     }
 
     // MARK: - Notifications
@@ -196,14 +282,25 @@ final class UsageModel {
         }
     }
 
+    func allowNotifications() {
+        whenNotificationsAllowed(enabling: true) { [self] in notificationsAllowed = true }
+    }
+
+    func refreshNotificationStatus() {
+        guard let notifier = Notifier.shared else { return }
+        Task { notificationsAllowed = await notifier.isAllowed() }
+    }
+
     /// Asks macOS for permission the first time something is switched on.
     private func whenNotificationsAllowed(enabling: Bool, _ apply: @escaping @MainActor () -> Void) {
         guard enabling, let notifier = Notifier.shared else { return apply() }
         Task {
             if await notifier.requestPermission() {
                 lastError = nil
+                notificationsAllowed = true
                 apply()
             } else {
+                notificationsAllowed = false
                 lastError = "Allow notifications for Headroom in System Settings → Notifications."
             }
         }
@@ -384,10 +481,14 @@ final class UsageModel {
     @ObservationIgnored private var lastSessions: [SessionSnapshot] = []
 
     private func reload() {
-        lastSnapshots = store.accounts()
-        lastSessions = store.sessions()
+        // Only accounts the person set up. A Claude Code session can keep running Headroom's status
+        // line for a while after Remove, and its readings shouldn't bring the card back.
+        let wanted = Set((installer.records().map(\.configDir) + Array(codexHomes.keys) + Array(live.keys)).map(ConfigDir.key))
+        lastSnapshots = store.accounts().filter { wanted.contains($0.key) }
+        lastSessions = store.sessions().filter { wanted.contains($0.accountKey) }
+        openCodex = codexHomes.isEmpty ? [:] : ProcessLookup.openCodexRollouts()
         refreshRows()
-        watchProcesses(lastSessions.filter { $0.process.map(ProcessLookup.isRunning) ?? false })
+        watchProcesses(Set(lastSessions.compactMap(\.process).filter(ProcessLookup.isRunning)).union(openCodex.values))
         updateNotifications()
         scheduleWake()
     }
@@ -395,8 +496,11 @@ final class UsageModel {
     /// Rebuilds the rows from the last loaded files (cheap; no disk access beyond install records).
     private func refreshRows() {
         now = Date()
-        let active = lastSessions.filter { $0.process.map(ProcessLookup.isRunning) ?? false }
+        let active = lastSessions.filter { session in
+            openCodex[session.sessionId] != nil || (session.process.map(ProcessLookup.isRunning) ?? false)
+        }
         let records = installer.records()
+        let codexKeys = Set(codexHomes.keys.map(ConfigDir.key))
 
         var rows: [String: AccountRow] = [:]
         func empty(_ key: String, _ label: String, _ dir: String) -> AccountRow {
@@ -407,6 +511,10 @@ final class UsageModel {
             let key = ConfigDir.key(for: record.configDir)
             rows[key] = empty(key, record.label, record.configDir)
         }
+        for (home, label) in codexHomes {
+            let key = ConfigDir.key(for: home)
+            rows[key] = empty(key, label, home)
+        }
         for snapshot in lastSnapshots {
             rows[snapshot.key, default: empty(snapshot.key, snapshot.label, snapshot.configDir)].snapshot = snapshot
         }
@@ -416,6 +524,7 @@ final class UsageModel {
             let today = Calendar.current.startOfDay(for: now)
             row.costToday = lastSessions.filter { $0.accountKey == key }.map { $0.cost(since: today) }.reduce(0, +)
             row.live = live[row.configDir]
+            row.isCodex = codexKeys.contains(key)
             row.isStale = row.snapshot.map { now > $0.updatedAt.addingTimeInterval(staleAfter(row.configDir)) } ?? false
             rows[key] = row
         }
@@ -430,6 +539,12 @@ final class UsageModel {
                      state: installer.state(configDir: dir, binary: cli), liveEnabled: live[dir] != nil,
                      isUserAdded: !scanned.contains(dir))
         }
+
+        var homes = CodexHome.detect()
+        for home in codexHomes.keys.sorted() where !homes.contains(home) { homes.append(home) }
+        codexRows = homes.map { home in
+            CodexRow(home: home, label: codexHomes[home] ?? CodexHome.defaultLabel(for: home), isTracked: codexHomes[home] != nil)
+        }
     }
 
     /// Live accounts are checked hourly, so only call them stale once a check is overdue.
@@ -438,8 +553,9 @@ final class UsageModel {
     }
 
     /// One kqueue exit source per running session, so a closed session drops off immediately.
-    private func watchProcesses(_ active: [SessionSnapshot]) {
-        let wanted = Set(active.compactMap(\.process))
+    /// A Codex session closed in a process that stays running (the app, an IDE) drops off at the
+    /// next reload instead.
+    private func watchProcesses(_ wanted: Set<ProcessIdentity>) {
         for (identity, source) in processSources where !wanted.contains(identity) {
             source.cancel()
             processSources[identity] = nil

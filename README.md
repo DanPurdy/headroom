@@ -36,6 +36,8 @@ every Claude Code account on your Mac at once. More at
   app and other devices, and adds what claude.ai's usage page shows beyond the two limits: a
   model's own weekly limit (such as Fable's), your extra usage this month, and where this
   week's usage went.
+- **Codex** (optional): the same 5-hour and weekly bars, pace, open sessions and History for
+  each OpenAI Codex account, read from Codex's own session logs.
 - **Update notifications**: Headroom checks GitHub for a new release once a day, and can
   install it from the menu.
 
@@ -62,17 +64,22 @@ System Settings → Privacy & Security → Open Anyway, or run
 
 ## Set up
 
+The first time Headroom opens, a setup guide walks you through it: the accounts it found,
+what connecting each one does, Live usage, what everything in the menu means, and alerts.
+Skip it if you like; it's under **Setup guide…** in Settings. To set up by hand:
+
 1. Click the gauge in the menu bar, then the **gear** to open Settings.
 2. Headroom lists `~/.claude` and every `~/.claude-*` folder. Each Claude Code folder (the
    one `CLAUDE_CONFIG_DIR` points at, or `~/.claude` by default) is one account. If yours
    lives somewhere else, use **Add folder…**.
-3. Give each a label and press **Install**. Press Return in the label field to rename it
+3. Give each a label and press **Connect**. Press Return in the label field to rename it
    later.
 4. Send a message in Claude Code on that account. Its usage appears straight away.
 5. Optionally switch on **Live usage** for an account (see below), **Launch at login** and
    **Usage alerts**.
+6. For Codex, press **Track** on a folder under **Codex accounts** (see below).
 
-**Install** edits the `statusLine` setting in that folder's `settings.json` so Headroom sees
+**Connect** edits the `statusLine` setting in that folder's `settings.json` so Headroom sees
 each reply. Your existing status line keeps working exactly as before. A copy of the
 original `settings.json` is kept in `~/Library/Application Support/Headroom/installs`, and
 **Remove** puts the original setting back.
@@ -120,6 +127,23 @@ Code conversation.
   Code out. If the saved login has expired, Live says so until Claude Code next runs on that
   account and you press ⟳.
 - If Anthropic rate-limits the check, Headroom waits at least 5 minutes before trying again.
+
+### Codex (optional, per account)
+
+Codex writes a log for each session to `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl`
+(`~/.codex` by default), and after each reply it records the account's plan usage there.
+Headroom lists `~/.codex` and every `~/.codex-*` folder under **Codex accounts** in
+Settings. **Track** reads those logs as Codex writes them: the 5-hour and weekly limits, any
+model's own limit (shown while it's in use), the plan, and each session's model and context
+used. Nothing in the folder is changed, and no login or network request is involved.
+
+- Sessions from the Codex CLI, IDE extension and app all count, since they share the folder.
+  Use from Codex cloud tasks or other devices shows up on the next reply on this Mac.
+- A session counts as open while a Codex process has its log open. One closed in the Codex app
+  or an IDE, which keep running, drops off at the next update or once it's been idle 15 minutes.
+- Codex logs tokens, not cost, so Codex accounts show no cost, and its guardian sub-agents'
+  usage is counted towards the session that started them.
+- **Stop** forgets what was read from that folder.
 
 ## Command line
 
@@ -188,22 +212,6 @@ picks up.
 
 Builds are ad-hoc signed. Add the secrets listed in `.github/workflows/release.yml` to get a
 Developer ID-signed, notarised build that opens without any Gatekeeper prompt.
-
-## Roadmap: Codex
-
-Codex CLI records the same kind of data in its session logs. In
-`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl`, `event_msg` lines with
-`payload.type == "token_count"` carry:
-
-```json
-"rate_limits": {
-  "primary":   {"used_percent": 1.0, "window_minutes": 300,   "resets_at": 1770213616},
-  "secondary": {"used_percent": 3.0, "window_minutes": 10080, "resets_at": 1770765266}
-}
-```
-
-`rate_limits` can be `null`. Watching that folder and reading the newest file's last
-non-null `rate_limits` would give a Codex card with no login or tokens involved.
 
 ## Licence
 

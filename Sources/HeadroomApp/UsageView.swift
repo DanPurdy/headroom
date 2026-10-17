@@ -46,7 +46,7 @@ struct UsageView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .fixedSize()
-                Button { showingSettings = true } label: {
+                                Button { showingSettings = true } label: {
                     Image(systemName: "gearshape")
                 }
                 .buttonStyle(.borderless)
@@ -68,6 +68,8 @@ struct UsageView: View {
                     HStack {
                         Text("No accounts connected").foregroundStyle(.secondary)
                         Spacer()
+                        Button("Set Up…") { model.showGuide() }
+                            .help("Walk through connecting accounts and what everything means")
                         Button("Open Settings") { showingSettings = true }
                     }
                     .font(.callout)
@@ -134,7 +136,7 @@ struct AccountCard: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(row.label).font(.headline)
-                if let plan = row.live?.plan {
+                if let plan = row.live?.plan ?? row.snapshot?.plan {
                     Text(plan.capitalized)
                         .font(.caption2.weight(.medium))
                         .padding(.horizontal, 5)
@@ -147,7 +149,7 @@ struct AccountCard: View {
                                      : "updated \(Formatting.age(of: snapshot.updatedAt, at: now))")
                         .font(.caption)
                         .foregroundStyle(row.isStale ? Color.orange : Color.secondary)
-                        .help(row.isStale ? "Updates on this account's next Claude Code reply" : "")
+                        .help(row.isStale ? "Updates on this account's next \(tool) reply" : "")
                 }
                 if let live = row.live {
                     if live.refreshing {
@@ -167,15 +169,17 @@ struct AccountCard: View {
 
             if let snapshot = row.snapshot {
                 Group {
-                    LimitBar(title: "5-hour", period: "the 5 hours", window: snapshot.fiveHour, length: LimitWindow.fiveHourLength, now: now)
+                    LimitBar(title: "5-hour", period: "the 5 hours", window: snapshot.fiveHour, length: LimitWindow.fiveHourLength,
+                             now: now, tint: row.tint)
                     LimitBar(title: "Weekly", period: "the week", window: snapshot.sevenDay, length: LimitWindow.sevenDayLength,
-                             now: now, note: snapshot.weeklyBreakdown.map { shares in
+                             now: now, tint: row.tint, note: snapshot.weeklyBreakdown.map { shares in
                                  "This week: " + shares.map { "\($0.name) \(Formatting.percent($0.percent))" }.joined(separator: " · ")
                              })
-                    ForEach(snapshot.scoped ?? [], id: \.name) { limit in
-                        LimitBar(title: "\(limit.name) weekly", period: "the week", window: limit.window,
-                                 length: limit.length ?? 0, now: now,
-                                 note: "\(limit.name)'s own limit, on top of the weekly limit for all models")
+                    ForEach(snapshot.scoped ?? [], id: \.id) { limit in
+                        let weekly = limit.length != LimitWindow.fiveHourLength
+                        LimitBar(title: "\(limit.name) \(weekly ? "weekly" : "5-hour")", period: weekly ? "the week" : "the 5 hours",
+                                 window: limit.window, length: limit.length ?? 0, now: now, tint: row.tint,
+                                 note: "\(limit.name)'s own limit, on top of the \(weekly ? "weekly" : "5-hour") limit for all models")
                     }
                 }
                 .opacity(row.isStale ? 0.5 : 1)
@@ -190,15 +194,18 @@ struct AccountCard: View {
                 Text("No usage yet")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .help("Send a message in Claude Code on this account")
+                    .help("Send a message in \(tool) on this account")
             }
 
             HStack {
                 Text("\(row.activeSessions.count) open session\(row.activeSessions.count == 1 ? "" : "s")")
-                    .help("Each session: model · ctx, context used · 🔥 time until its prompt cache goes cold · ⚠️ cache missed in the last hour")
+                    .help(row.isCodex ? "Each session: model · ctx, context used"
+                                      : "Each session: model · ctx, context used · 🔥 time until its prompt cache goes cold · ⚠️ cache missed in the last hour")
                 Spacer()
-                Text("\(Formatting.usd(row.costToday)) today")
-                    .help("API-equivalent cost, estimated by Claude Code")
+                if !row.isCodex { // Codex logs tokens, not cost
+                    Text("\(Formatting.usd(row.costToday)) today")
+                        .help("API-equivalent cost, estimated by Claude Code")
+                }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -211,6 +218,21 @@ struct AccountCard: View {
         .padding(10)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
     }
+
+    private var tool: String { row.isCodex ? "Codex" : "Claude Code" }
+}
+
+/// Each tool's own colour, so Claude and Codex accounts can be told apart at a glance.
+/// Warnings stay system orange and red, the same for both.
+enum Brand {
+    /// Claude's terracotta.
+    static let claude = Color(red: 0xD9 / 255, green: 0x77 / 255, blue: 0x57 / 255)
+    /// Codex's periwinkle blue, from its app icon and website.
+    static let codex = Color(red: 0x58 / 255, green: 0x69 / 255, blue: 0xF7 / 255)
+}
+
+extension AccountRow {
+    var tint: Color { isCodex ? Brand.codex : Brand.claude }
 }
 
 struct LimitBar: View {
@@ -220,6 +242,8 @@ struct LimitBar: View {
     let window: LimitWindow?
     let length: TimeInterval
     let now: Date
+    /// The account's tool colour; every bar turns red from 90%.
+    var tint = Brand.claude
     /// Added to the tooltip.
     var note: String?
 
@@ -245,7 +269,7 @@ struct LimitBar: View {
                 ZStack(alignment: .leading) {
                     Capsule().fill(.quaternary)
                     Capsule()
-                        .fill(used >= 90 ? Color.red : Color.orange)
+                        .fill(used >= 90 ? Color.red : tint)
                         .frame(width: geometry.size.width * used / 100)
                     if let pace {
                         Rectangle()

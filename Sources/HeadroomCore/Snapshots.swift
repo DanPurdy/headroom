@@ -69,6 +69,8 @@ public struct AccountSnapshot: Codable, Equatable, Sendable {
     public var weeklyBreakdown: [UsageShare]?
     /// Readings from Live's checks, kept like session samples so charts and History include them.
     public var liveSamples: [UsageSample]?
+    /// The plan the readings came with, when the source says (Codex does), e.g. "plus".
+    public var plan: String?
 
     /// Readings older than this may miss usage from elsewhere, so the UI marks them.
     public static let staleAfter: TimeInterval = 30 * 60
@@ -76,7 +78,7 @@ public struct AccountSnapshot: Codable, Equatable, Sendable {
     public init(key: String, label: String, configDir: String,
                 fiveHour: LimitWindow?, sevenDay: LimitWindow?, updatedAt: Date,
                 scoped: [ScopedLimit]? = nil, extraUsage: ExtraUsage? = nil, weeklyBreakdown: [UsageShare]? = nil,
-                liveSamples: [UsageSample]? = nil) {
+                liveSamples: [UsageSample]? = nil, plan: String? = nil) {
         self.key = key
         self.label = label
         self.configDir = configDir
@@ -87,6 +89,7 @@ public struct AccountSnapshot: Codable, Equatable, Sendable {
         self.extraUsage = extraUsage
         self.weeklyBreakdown = weeklyBreakdown
         self.liveSamples = liveSamples
+        self.plan = plan
     }
 
     /// `nil` when the input carries no `rate_limits` yet (before the session's first
@@ -109,7 +112,8 @@ public struct AccountSnapshot: Codable, Equatable, Sendable {
                         scoped: incoming.scoped ?? scoped,
                         extraUsage: incoming.extraUsage ?? extraUsage,
                         weeklyBreakdown: incoming.weeklyBreakdown ?? weeklyBreakdown,
-                        liveSamples: incoming.liveSamples ?? liveSamples)
+                        liveSamples: incoming.liveSamples ?? liveSamples,
+                        plan: incoming.plan ?? plan)
     }
 
     /// `samples` with `sample` added, dropping those older than session samples are kept for.
@@ -136,6 +140,9 @@ public struct ScopedLimit: Codable, Equatable, Sendable {
         self.window = window
         self.length = length
     }
+
+    /// Unique within an account: one name can have both a 5-hour and a weekly limit.
+    public var id: String { "\(name)-\(length ?? 0)" }
 }
 
 /// Pay-as-you-go credits that cover usage beyond the plan's limits.
@@ -259,11 +266,15 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
             latest.at = max(latest.at, samples.last?.at ?? latest.at)
             samples.append(latest)
         }
-        let cutoff = now.addingTimeInterval(-costHistory)
-        if let anchor = samples.lastIndex(where: { $0.at <= cutoff }) {
-            samples.removeFirst(anchor)
-        }
+        samples = trimmed(samples, now: now)
         return samples.isEmpty ? nil : samples
+    }
+
+    /// `samples` without those older than `costHistory`, except the newest of them.
+    static func trimmed(_ samples: [UsageSample], now: Date) -> [UsageSample] {
+        let cutoff = now.addingTimeInterval(-costHistory)
+        guard let anchor = samples.lastIndex(where: { $0.at <= cutoff }) else { return samples }
+        return Array(samples.dropFirst(anchor))
     }
 
     public static func from(_ input: StatusLineInput, configDir: String, process: ProcessIdentity?,

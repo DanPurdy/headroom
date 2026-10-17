@@ -9,6 +9,10 @@ struct SettingsPage: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Claude Code accounts")
                 .font(.subheadline.weight(.semibold))
+            Text("Found on this Mac: ~/.claude and every ~/.claude-* folder. Each is one account. Connect the ones you use.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             if model.isTranslocated {
                 Text("Move Headroom to Applications to install.")
@@ -25,11 +29,29 @@ struct SettingsPage: View {
             ForEach(model.setupRows) { row in
                 SetupRowView(row: row, model: model)
             }
-            Button("Add folder…", action: chooseFolder)
+            Button("Add folder…") { chooseClaudeFolder(model) }
                 .controlSize(.small)
                 .help("Add a Claude Code folder outside ~/.claude*")
             if let error = model.lastError {
                 Text(error).font(.caption).foregroundStyle(.red)
+            }
+
+            Divider()
+
+            Text("Codex accounts")
+                .font(.subheadline.weight(.semibold))
+            Text("Found on this Mac: ~/.codex and every ~/.codex-* folder. Track the ones you use.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if model.codexRows.isEmpty {
+                Text("No Codex folders found")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help("Headroom looks for ~/.codex and ~/.codex-* folders with Codex sessions in them")
+            }
+            ForEach(model.codexRows) { row in
+                CodexRowView(row: row, model: model)
             }
 
             Divider()
@@ -80,28 +102,32 @@ struct SettingsPage: View {
                 Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")")
                     .foregroundStyle(.secondary)
                 Spacer()
+                Button("Setup guide…") { model.showGuide() }
+                    .buttonStyle(.link)
                 Link("GitHub", destination: URL(string: "https://github.com/DanPurdy/headroom")!)
             }
             .font(.caption)
         }
+        // Clicking empty space ends editing a label, which saves it.
+        .contentShape(Rectangle())
+        .onTapGesture { NSApplication.shared.keyWindow?.makeFirstResponder(nil) }
     }
 }
 
-extension SettingsPage {
-    /// Hidden folders shown, since Claude Code folders usually start with a dot.
-    private func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.showsHiddenFiles = true
-        panel.directoryURL = URL(fileURLWithPath: NSHomeDirectory())
-        panel.message = "Choose a Claude Code folder"
-        panel.prompt = "Add"
-        NSApplication.shared.activate()
-        if panel.runModal() == .OK, let url = panel.url {
-            model.addConfigDir(url.path)
-        }
+/// Hidden folders shown, since Claude Code folders usually start with a dot.
+@MainActor
+func chooseClaudeFolder(_ model: UsageModel) {
+    let panel = NSOpenPanel()
+    panel.canChooseDirectories = true
+    panel.canChooseFiles = false
+    panel.allowsMultipleSelection = false
+    panel.showsHiddenFiles = true
+    panel.directoryURL = URL(fileURLWithPath: NSHomeDirectory())
+    panel.message = "Choose a Claude Code folder"
+    panel.prompt = "Add"
+    NSApplication.shared.activate()
+    if panel.runModal() == .OK, let url = panel.url {
+        model.addConfigDir(url.path)
     }
 }
 
@@ -109,6 +135,7 @@ struct SetupRowView: View {
     let row: SetupRow
     let model: UsageModel
     @State private var label: String
+    @FocusState private var editingLabel: Bool
 
     init(row: SetupRow, model: UsageModel) {
         self.row = row
@@ -131,8 +158,11 @@ struct SetupRowView: View {
                     .labelsHidden()
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 150)
+                    .focused($editingLabel)
                     .onSubmit(saveLabel)
-                    .help("Press Return to save")
+                    .onChange(of: editingLabel) { _, editing in if !editing { saveLabel() } }
+                    .onDisappear(perform: saveLabel) // closing the menu saves too
+                    .help("Saved when you press Return or click away")
                 Spacer()
                 actions
             }
@@ -162,8 +192,12 @@ struct SetupRowView: View {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
+    /// Renames a connected account; an emptied label goes back to the current one.
     private func saveLabel() {
-        if case .installed(let current) = row.state, current != label {
+        guard case .installed(let current) = row.state else { return }
+        if label.trimmingCharacters(in: .whitespaces).isEmpty {
+            label = current
+        } else if current != label {
             model.install(configDir: row.configDir, label: label)
         }
     }
@@ -173,7 +207,7 @@ struct SetupRowView: View {
         case .notInstalled:
             Text("Not connected").foregroundStyle(.secondary)
         case .installed:
-            Label("Installed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+            Label("Connected", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
         case .stale:
             Text("Needs repair").foregroundStyle(.orange)
                 .help("Points at an older copy of Headroom")
@@ -187,7 +221,7 @@ struct SetupRowView: View {
                 Button("Forget") { model.forgetConfigDir(row.configDir) }
                     .help("Remove this folder from Headroom's list")
             }
-            Button("Install") { model.install(configDir: row.configDir, label: label) }
+            Button("Connect") { model.install(configDir: row.configDir, label: label) }
                 .help("Record usage after each Claude Code reply. Your status line keeps working.")
         case .installed(let current):
             if current != label {
@@ -198,6 +232,71 @@ struct SetupRowView: View {
         case .stale:
             Button("Repair") { model.install(configDir: row.configDir, label: label) }
             Button("Remove") { model.uninstall(configDir: row.configDir) }
+        }
+    }
+}
+
+struct CodexRowView: View {
+    let row: CodexRow
+    let model: UsageModel
+    @State private var label: String
+    @FocusState private var editingLabel: Bool
+
+    init(row: CodexRow, model: UsageModel) {
+        self.row = row
+        self.model = model
+        _label = State(initialValue: row.label)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(row.home.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                    .font(.caption.monospaced())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                if row.isTracked {
+                    Label("Tracking", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                } else {
+                    Text("Not tracked").foregroundStyle(.secondary)
+                }
+            }
+            HStack {
+                TextField("Label", text: $label, prompt: Text("Label"))
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 150)
+                    .focused($editingLabel)
+                    .onSubmit(saveLabel)
+                    .onChange(of: editingLabel) { _, editing in if !editing { saveLabel() } }
+                    .onDisappear(perform: saveLabel) // closing the menu saves too
+                    .help("Saved when you press Return or click away")
+                Spacer()
+                if !row.isTracked {
+                    Button("Track") { model.trackCodex(home: row.home, label: label) }
+                        .help("Read usage from this folder's Codex session logs. Nothing in it is changed.")
+                } else {
+                    if row.label != label {
+                        Button("Rename") { model.trackCodex(home: row.home, label: label) }
+                    }
+                    Button("Stop") { model.untrackCodex(home: row.home) }
+                        .help("Stop reading this folder and forget its usage")
+                }
+            }
+            .controlSize(.small)
+        }
+        .padding(10)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// Renames a tracked home; an emptied label goes back to the current one.
+    private func saveLabel() {
+        guard row.isTracked else { return }
+        if label.trimmingCharacters(in: .whitespaces).isEmpty {
+            label = row.label
+        } else if row.label != label {
+            model.trackCodex(home: row.home, label: label)
         }
     }
 }

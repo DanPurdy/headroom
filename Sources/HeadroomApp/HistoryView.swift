@@ -60,7 +60,7 @@ struct HistoryPage: View {
                     if model.accounts.count > 1 {
                         Text(account.label).font(.caption.weight(.semibold))
                     }
-                    UsageChart(points: points, start: start, now: now)
+                    UsageChart(points: points, start: start, now: now, tint: account.tint)
                 }
             }
         }
@@ -84,14 +84,14 @@ struct HistoryPage: View {
                         Text(account.label).fontWeight(.semibold).lineLimit(1)
                         Text(HistoryEntry.rise(mine.map(\.use.fiveHour).reduce(0, +)))
                         Text(HistoryEntry.rise(mine.map(\.use.sevenDay).reduce(0, +)))
-                        Text(Formatting.usd(mine.map(\.cost).reduce(0, +))).foregroundStyle(.secondary)
+                        Text(account.isCodex ? "–" : Formatting.usd(mine.map(\.cost).reduce(0, +))).foregroundStyle(.secondary)
                     }
                     .monospacedDigit()
                 }
             }
         }
         .font(.callout)
-        .help("Use from claude.ai or other devices counts towards the next Claude Code reply. Costs are API-equivalent estimates.")
+        .help("Use from claude.ai or other devices counts towards the next Claude Code reply. Costs are API-equivalent estimates; Codex doesn't log any.")
     }
 
     private func entries(since start: Date) -> [HistoryEntry] {
@@ -111,6 +111,8 @@ struct UsageChart: View {
     let points: [UsageSeries.Point]
     let start: Date
     let now: Date
+    /// The 5-hour line, in the account's tool colour.
+    var tint = Brand.claude
 
     var body: some View {
         Chart {
@@ -125,7 +127,8 @@ struct UsageChart: View {
         }
         .chartXScale(domain: start...now)
         .chartYScale(domain: 0...100)
-        .chartForegroundStyleScale(["5-hour": Color.orange, "Weekly": Color.blue])
+        // Weekly in grey: blue would clash with Codex's colour.
+        .chartForegroundStyleScale(["5-hour": tint, "Weekly": Color.secondary])
         .chartYAxis {
             AxisMarks(values: [0, 50, 100]) { value in
                 AxisGridLine()
@@ -180,7 +183,7 @@ struct HistoryRow: View {
         var parts: [String] = []
         if showAccount, let account = entry.account { parts.append(account) }
         if let model = entry.session.model { parts.append(Formatting.modelName(model)) }
-        parts.append(Formatting.usd(entry.cost))
+        if entry.session.costUSD != nil || entry.cost > 0 { parts.append(Formatting.usd(entry.cost)) }
         parts.append("last reply \(Formatting.age(of: entry.lastActive, at: now))")
         return parts.joined(separator: " · ")
     }
