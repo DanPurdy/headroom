@@ -1,158 +1,214 @@
 import HeadroomCore
 import SwiftUI
 
-/// The settings page of the dropdown.
+/// The settings page of the dropdown, in tabs.
 struct SettingsPage: View {
     let model: UsageModel
+    @AppStorage("settingsTab") private var tab = Tab.accounts
+
+    enum Tab: String {
+        case accounts, alerts, general
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Claude Code accounts")
-                .font(.subheadline.weight(.semibold))
-            Text("Found on this Mac: ~/.claude and every ~/.claude-* folder. Each is one account. Connect the ones you use.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            Picker("Section", selection: $tab) {
+                Text("Accounts").tag(Tab.accounts)
+                Text("Alerts").tag(Tab.alerts)
+                Text("General").tag(Tab.general)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
 
-            if model.isTranslocated {
-                Text("Move Headroom to Applications to install.")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
+            switch tab {
+            case .accounts: accounts
+            case .alerts: alerts
+            case .general: general
             }
 
-            if model.setupRows.isEmpty {
-                Text("No Claude Code folders found")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(model.setupRows) { row in
-                SetupRowView(row: row, model: model)
-            }
-            Button("Add folder…") { chooseClaudeFolder(model) }
-                .controlSize(.small)
-                .help("Add a Claude Code folder outside ~/.claude*")
             if let error = model.lastError {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
+        }
+        // A first run lands where setup happens.
+        .onAppear { if model.accounts.isEmpty { tab = .accounts } }
+        // Clicking empty space ends editing a label, which saves it.
+        .contentShape(Rectangle())
+        .onTapGesture { NSApplication.shared.keyWindow?.makeFirstResponder(nil) }
+    }
 
-            Divider()
+    @ViewBuilder private var accounts: some View {
+        Text("Claude Code accounts")
+            .font(.subheadline.weight(.semibold))
+        Text("Found on this Mac: ~/.claude and every ~/.claude-* folder. Each is one account. Connect the ones you use.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
 
-            Text("Codex accounts")
-                .font(.subheadline.weight(.semibold))
-            Text("Found on this Mac: ~/.codex and every ~/.codex-* folder. Track the ones you use.")
+        if model.isTranslocated {
+            Text("Move Headroom to Applications to install.")
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+
+        if model.setupRows.isEmpty {
+            Text("No Claude Code folders found")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if model.codexRows.isEmpty {
-                Text("No Codex folders found")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .help("Headroom looks for ~/.codex and ~/.codex-* folders with Codex sessions in them")
-            }
-            ForEach(model.codexRows) { row in
-                CodexRowView(row: row, model: model)
-            }
+        }
+        ForEach(model.setupRows) { row in
+            SetupRowView(row: row, model: model)
+        }
+        Button("Add folder…") { chooseClaudeFolder(model) }
+            .controlSize(.small)
+            .help("Add a Claude Code folder outside ~/.claude*")
+        if model.hasLiveAccounts {
+            LiveIntervalSetting(model: model)
+        }
 
-            Divider()
+        Divider()
 
-            Text("Menu bar")
-                .font(.subheadline.weight(.semibold))
-            Picker("Show", selection: Binding(get: { model.menuBarStyle }, set: { model.setMenuBarStyle($0) })) {
-                ForEach(MenuBarStyle.allCases) { style in
-                    Text(style.title).tag(style)
-                }
+        Text("Codex accounts")
+            .font(.subheadline.weight(.semibold))
+        Text("Found on this Mac: ~/.codex and every ~/.codex-* folder. Track the ones you use.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        if model.codexRows.isEmpty {
+            Text("No Codex folders found")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .help("Headroom looks for ~/.codex and ~/.codex-* folders with Codex sessions in them")
+        }
+        ForEach(model.codexRows) { row in
+            CodexRowView(row: row, model: model)
+        }
+    }
+
+    @ViewBuilder private var alerts: some View {
+        if model.notificationsAvailable {
+            Picker("Usage alerts", selection: Binding(get: { model.alertThreshold },
+                                                      set: { model.setAlertThreshold($0) })) {
+                Text("Off").tag(0)
+                Text("At 80%").tag(80)
+                Text("At 90%").tag(90)
             }
             .pickerStyle(.menu)
             .fixedSize()
             .controlSize(.small)
             .font(.callout)
-            .help("How much the menu bar item shows. The dropdown always shows everything.")
-            if model.menuBarStyle != .icon, !model.accounts.isEmpty {
-                Text("Accounts in the menu bar")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                ForEach(model.accounts) { row in
-                    Toggle(isOn: Binding(get: { !model.hiddenMenuBarAccounts.contains(row.key) },
-                                         set: { model.setShownInMenuBar(row.key, $0) })) {
-                        HStack(spacing: 5) {
-                            Circle().fill(row.tint).frame(width: 7, height: 7)
-                            Text(row.label)
-                        }
-                    }
-                    .toggleStyle(.checkbox)
-                    .controlSize(.small)
-                    .font(.callout)
-                }
+            .help("Notify when a limit passes this, and again when it resets. With Live on, also when an account starts on extra usage.")
+
+            if model.hasLiveAccounts {
+                SpendAlertSetting(model: model)
+            } else {
+                Note("Turn Live on for an account (Accounts) to be warned about extra usage spend.")
             }
+            Note("To be warned before a session's prompt cache goes cold, click its 🔥 countdown in the menu.")
+        } else {
+            Note("Notifications need Headroom installed as an app, in Applications.")
+        }
+    }
 
-            Divider()
-
-            Toggle("Launch at login", isOn: Binding(get: { model.launchAtLogin },
-                                                    set: { model.setLaunchAtLogin($0) }))
-                .toggleStyle(.switch)
+    @ViewBuilder private var general: some View {
+        Text("Menu bar")
+            .font(.subheadline.weight(.semibold))
+        Picker("Show", selection: Binding(get: { model.menuBarStyle }, set: { model.setMenuBarStyle($0) })) {
+            ForEach(MenuBarStyle.allCases) { style in
+                Text(style.title).tag(style)
+            }
+        }
+        .pickerStyle(.menu)
+        .fixedSize()
+        .controlSize(.small)
+        .font(.callout)
+        .help("How much the menu bar item shows. The dropdown always shows everything.")
+        if model.menuBarStyle != .icon, !model.accounts.isEmpty {
+            Text("Accounts in the menu bar")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            ForEach(model.accounts) { row in
+                Toggle(isOn: Binding(get: { !model.hiddenMenuBarAccounts.contains(row.key) },
+                                     set: { model.setShownInMenuBar(row.key, $0) })) {
+                    HStack(spacing: 5) {
+                        Circle().fill(row.tint).frame(width: 7, height: 7)
+                        Text(row.label)
+                    }
+                }
+                .toggleStyle(.checkbox)
                 .controlSize(.small)
                 .font(.callout)
-
-            HStack {
-                Toggle("Check for updates", isOn: Binding(get: { model.checksForUpdates },
-                                                          set: { model.setChecksForUpdates($0) }))
-                    .toggleStyle(.switch)
-                    .help("Asks GitHub for the latest release once a day")
-                if let update = model.update {
-                    Button(model.updating ? "Updating…" : "Update now", action: model.installUpdate)
-                        .disabled(model.updating)
-                        .help("Install \(update.version) and reopen Headroom")
-                } else {
-                    Button(model.checkingForUpdates ? "Checking…" : "Check now", action: model.checkForUpdatesNow)
-                        .disabled(model.checkingForUpdates)
-                    if let result = model.updateCheckResult {
-                        Text(result).foregroundStyle(.secondary)
-                    }
-                }
             }
+        }
+
+        Divider()
+
+        Toggle("Launch at login", isOn: Binding(get: { model.launchAtLogin },
+                                                set: { model.setLaunchAtLogin($0) }))
+            .toggleStyle(.switch)
             .controlSize(.small)
             .font(.callout)
 
-            if model.notificationsAvailable {
-                Picker("Usage alerts", selection: Binding(get: { model.alertThreshold },
-                                                          set: { model.setAlertThreshold($0) })) {
-                    Text("Off").tag(0)
-                    Text("At 80%").tag(80)
-                    Text("At 90%").tag(90)
+        HStack {
+            Toggle("Check for updates", isOn: Binding(get: { model.checksForUpdates },
+                                                      set: { model.setChecksForUpdates($0) }))
+                .toggleStyle(.switch)
+                .help("Asks GitHub for the latest release once a day")
+            if let update = model.update {
+                Button(model.updating ? "Updating…" : "Update now", action: model.installUpdate)
+                    .disabled(model.updating)
+                    .help("Install \(update.version) and reopen Headroom")
+            } else {
+                Button(model.checkingForUpdates ? "Checking…" : "Check now", action: model.checkForUpdatesNow)
+                    .disabled(model.checkingForUpdates)
+                if let result = model.updateCheckResult {
+                    Text(result).foregroundStyle(.secondary)
                 }
-                .pickerStyle(.menu)
-                .fixedSize()
-                .controlSize(.small)
-                .font(.callout)
-                .help("Notify when a limit passes this, and again when it resets")
             }
-
-            if model.hasLiveAccounts {
-                Divider()
-                LiveSettings(model: model)
-            }
-
-            Divider()
-
-            HStack {
-                Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")")
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Setup guide…") { model.showGuide() }
-                    .buttonStyle(.link)
-                Link("GitHub", destination: URL(string: "https://github.com/DanPurdy/headroom")!)
-            }
-            .font(.caption)
         }
-        // Clicking empty space ends editing a label, which saves it.
-        .contentShape(Rectangle())
-        .onTapGesture { NSApplication.shared.keyWindow?.makeFirstResponder(nil) }
+        .controlSize(.small)
+        .font(.callout)
+
+        Divider()
+
+        HStack {
+            Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")")
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button("Setup guide…") { model.showGuide() }
+                .buttonStyle(.link)
+            Link("GitHub", destination: URL(string: "https://github.com/DanPurdy/headroom")!)
+        }
+        .font(.caption)
     }
 }
 
-/// Settings that only matter once an account has Live on.
-struct LiveSettings: View {
+/// How often Live checks an account that's on extra usage.
+struct LiveIntervalSetting: View {
+    let model: UsageModel
+
+    private var steps: [Int] { LiveSchedule.extraUsageMinutes }
+
+    var body: some View {
+        HStack {
+            Text("On extra usage, check Live every")
+            Slider(value: Binding(get: { Double(steps.firstIndex(of: model.extraUsageMinutes) ?? 0) },
+                                  set: { model.setExtraUsageMinutes(steps[min(max(Int($0.rounded()), 0), steps.count - 1)]) }),
+                   in: 0...Double(steps.count - 1), step: 1)
+                .frame(width: 90)
+            Text("\(model.extraUsageMinutes) min")
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        }
+        .controlSize(.small)
+        .font(.callout)
+        .help("While an account's plan limit is full and it's spending extra usage, Live checks this often instead of hourly")
+    }
+}
+
+/// Notify once this month's extra usage passes an amount.
+struct SpendAlertSetting: View {
     let model: UsageModel
     @State private var amount: String
     @FocusState private var editingAmount: Bool
@@ -162,43 +218,21 @@ struct LiveSettings: View {
         _amount = State(initialValue: model.extraUsageAlertAmount)
     }
 
-    private var steps: [Int] { LiveSchedule.extraUsageMinutes }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Extra usage")
-                .font(.subheadline.weight(.semibold))
-            HStack {
-                Text("On extra usage, check Live every")
-                Slider(value: Binding(get: { Double(steps.firstIndex(of: model.extraUsageMinutes) ?? 0) },
-                                      set: { model.setExtraUsageMinutes(steps[min(max(Int($0.rounded()), 0), steps.count - 1)]) }),
-                       in: 0...Double(steps.count - 1), step: 1)
-                    .frame(width: 90)
-                Text("\(model.extraUsageMinutes) min")
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-            }
-            .controlSize(.small)
-            .font(.callout)
-            .help("While an account's plan limit is full and it's spending extra usage, Live checks this often instead of hourly")
-
-            if model.notificationsAvailable {
-                HStack {
-                    Text("Notify when extra usage passes")
-                    TextField("Amount", text: $amount, prompt: Text("Off"))
-                        .labelsHidden()
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 70)
-                        .focused($editingAmount)
-                        .onSubmit(save)
-                        .onChange(of: editingAmount) { _, editing in if !editing { save() } }
-                        .onDisappear(perform: save)
-                        .help("This month's spend, in each account's own currency. Empty is off. Saved when you press Return or click away.")
-                }
-                .controlSize(.small)
-                .font(.callout)
-            }
+        HStack {
+            Text("Notify when extra usage passes")
+            TextField("Amount", text: $amount, prompt: Text("Off"))
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 70)
+                .focused($editingAmount)
+                .onSubmit(save)
+                .onChange(of: editingAmount) { _, editing in if !editing { save() } }
+                .onDisappear(perform: save)
+                .help("This month's spend, in each account's own currency. Empty is off. Saved when you press Return or click away.")
         }
+        .controlSize(.small)
+        .font(.callout)
     }
 
     private func save() {
