@@ -13,12 +13,17 @@ public enum ExtraUsageAlerts {
     public static func notices(for crossed: [LimitAlerts.Alert], accounts: [AccountSnapshot], now: Date,
                                locale: Locale = .current) -> [LimitAlerts.Notice] {
         Dictionary(grouping: crossed, by: \.accountKey).values.sorted { $0[0].label < $1[0].label }.compactMap { alerts in
-            guard let extra = accounts.first(where: { $0.key == alerts[0].accountKey })?.extraUsage,
-                  let until = alerts.max(by: { $0.resetsAt < $1.resetsAt }) else { return nil }
+            guard let account = accounts.first(where: { $0.key == alerts[0].accountKey }),
+                  let extra = account.extraUsage else { return nil }
+            // The account stays on extra usage until every full window has reset, including ones
+            // that filled before this alert.
+            let full = [(LimitAlerts.Window.fiveHour, account.fiveHour), (.weekly, account.sevenDay)]
+                .compactMap { window, reading in reading.flatMap { $0.usedPercentage(at: now) >= 100 ? (window, $0.resetsAt) : nil } }
+            let until = full.max { $0.1 < $1.1 } ?? (alerts[0].window, alerts[0].resetsAt)
             return LimitAlerts.Notice(
                 id: "extra-" + alerts.map { LimitAlerts.key($0.accountKey, $0.window) }.joined(separator: ","),
-                title: "\(until.label): now on extra usage",
-                body: "\(SpendAlerts.spent(extra, locale: locale)) used this month. Claude Code uses the 5-minute prompt cache until the \(until.window.rawValue) limit resets in \(Formatting.countdown(until: until.resetsAt, from: now)).")
+                title: "\(account.label): now on extra usage",
+                body: "\(SpendAlerts.spent(extra, locale: locale)) used this month. Claude Code uses the 5-minute prompt cache until the \(until.0.rawValue) limit resets in \(Formatting.countdown(until: until.1, from: now)).")
         }
     }
 }
@@ -58,6 +63,19 @@ public enum SpendAlerts {
                 title: "\(alert.label): extra usage passed \(Formatting.money(amount, alert.extraUsage.currency, locale: locale))",
                 body: "\(spent(alert.extraUsage, locale: locale)) used this month.")
         }
+    }
+
+    /// The amount typed in Settings, in the user's locale, ignoring any currency symbol; nil
+    /// (off) when empty, unreadable or not positive.
+    public static func amount(from text: String, locale: Locale = .current) -> Decimal? {
+        let digits = text.filter { $0.isNumber || $0 == "." || $0 == "," }
+        let formatter = NumberFormatter()
+        formatter.locale = locale
+        formatter.numberStyle = .decimal
+        formatter.generatesDecimalNumbers = true
+        guard let number = formatter.number(from: digits) as? NSDecimalNumber else { return nil }
+        let amount = number.decimalValue
+        return amount > 0 ? amount : nil
     }
 
     /// "£4.20 of £20.00", or "£4.20" with no cap.

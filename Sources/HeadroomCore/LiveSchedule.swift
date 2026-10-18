@@ -20,10 +20,10 @@ public enum LiveSchedule {
     }
 
     /// How long to wait after the nth rate limit in a row: 5, 10, 20 minutes… up to an hour,
-    /// and never less than the server's `Retry-After`.
+    /// or the server's `Retry-After` if that's longer.
     public static func backoff(consecutiveRateLimits: Int, retryAfter: TimeInterval?) -> TimeInterval {
         let doublings = min(max(consecutiveRateLimits - 1, 0), 10)
         let exponential = minimumBackoff * pow(2, Double(doublings))
-        return min(max(retryAfter ?? 0, exponential), maximumBackoff)
+        return max(retryAfter ?? 0, min(exponential, maximumBackoff))
     }
 }

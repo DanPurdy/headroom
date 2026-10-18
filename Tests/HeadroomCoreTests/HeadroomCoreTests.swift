@@ -1280,13 +1280,13 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         #expect(hourly > now)
     }
 
-    @Test func backoffDoublesFromFiveMinutesAndCapsAtAnHour() {
+    @Test func backoffDoublesFromFiveMinutesCapsAtAnHourAndHonoursRetryAfter() {
         #expect(LiveSchedule.backoff(consecutiveRateLimits: 1, retryAfter: nil) == 300)
         #expect(LiveSchedule.backoff(consecutiveRateLimits: 2, retryAfter: nil) == 600)
         #expect(LiveSchedule.backoff(consecutiveRateLimits: 3, retryAfter: nil) == 1200)
         #expect(LiveSchedule.backoff(consecutiveRateLimits: 9, retryAfter: nil) == 3600)
         #expect(LiveSchedule.backoff(consecutiveRateLimits: 1, retryAfter: 900) == 900)
-        #expect(LiveSchedule.backoff(consecutiveRateLimits: 1, retryAfter: 99999) == 3600)
+        #expect(LiveSchedule.backoff(consecutiveRateLimits: 1, retryAfter: 7200) == 7200)
         #expect(LiveSchedule.backoff(consecutiveRateLimits: 0, retryAfter: nil) == 300)
     }
 
@@ -1334,6 +1334,27 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         #expect(notice.title == "Work: now on extra usage")
         #expect(notice.body == "£4.20 of £20.00 used this month. Claude Code uses the 5-minute prompt cache until the weekly limit resets in 1d.")
         #expect(notice.id.hasPrefix("extra-"))
+    }
+
+    @Test func startedNoticeNamesAWindowThatFilledEarlier() throws {
+        let extra = ExtraUsage(used: 4.2, limit: 20, currency: "GBP")
+        let weeklyFull = account(extra: extra, fiveHour: 10, sevenDay: 100)
+        let earlier = starts([weeklyFull])
+        let both = account(extra: extra, fiveHour: 100, sevenDay: 100)
+        let later = starts([both], fired: earlier.fired)
+        #expect(later.crossed.map(\.window) == [.fiveHour])
+        let notice = try #require(ExtraUsageAlerts.notices(for: later.crossed, accounts: [both], now: now, locale: gb).first)
+        #expect(notice.body.hasSuffix("until the weekly limit resets in 1d."))
+    }
+
+    @Test func amountReadsWhatPeopleType() {
+        #expect(SpendAlerts.amount(from: "150", locale: gb) == 150)
+        #expect(SpendAlerts.amount(from: "£150.50", locale: gb) == Decimal(string: "150.50"))
+        #expect(SpendAlerts.amount(from: "1,000", locale: gb) == 1000)
+        #expect(SpendAlerts.amount(from: "10,50", locale: Locale(identifier: "de_DE")) == Decimal(string: "10.50"))
+        #expect(SpendAlerts.amount(from: "", locale: gb) == nil)
+        #expect(SpendAlerts.amount(from: "lots", locale: gb) == nil)
+        #expect(SpendAlerts.amount(from: "0", locale: gb) == nil)
     }
 
     @Test func startedNoticeWithoutACap() throws {

@@ -202,6 +202,7 @@ struct LiveSettings: View {
     }
 
     private func save() {
+        if SpendAlerts.amount(from: amount) == nil { amount = "" }
         if amount.trimmingCharacters(in: .whitespaces) != model.extraUsageAlertAmount {
             model.setExtraUsageAlertAmount(amount)
         }

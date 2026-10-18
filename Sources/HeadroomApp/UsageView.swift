@@ -144,7 +144,9 @@ struct AccountCard: View {
                         .background(.quaternary, in: Capsule())
                 }
                 Spacer()
-                if let checked = row.snapshot?.liveSamples?.last?.at, row.live != nil {
+                // Right after a check this matches "updated", so it only shows once Live lags behind.
+                if let snapshot = row.snapshot, row.live != nil, let checked = snapshot.liveSamples?.last?.at,
+                   snapshot.updatedAt.timeIntervalSince(checked) > 60 {
                     Text("Live checked \(Formatting.age(of: checked, at: now))")
                         .font(.caption)
                         .foregroundStyle(.secondary)

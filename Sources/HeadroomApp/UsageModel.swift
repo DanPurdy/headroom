@@ -307,15 +307,11 @@ final class UsageModel {
     /// An empty or unreadable amount turns the alert off.
     func setExtraUsageAlertAmount(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
-        whenNotificationsAllowed(enabling: Self.parseAmount(trimmed) != nil) { [self] in
+        whenNotificationsAllowed(enabling: SpendAlerts.amount(from: trimmed) != nil) { [self] in
             extraUsageAlertAmount = trimmed
             UserDefaults.standard.set(trimmed, forKey: Self.extraUsageAmountKey)
             reload()
         }
-    }
-
-    private static func parseAmount(_ text: String) -> Decimal? {
-        Decimal(string: text).flatMap { $0 > 0 ? $0 : nil }
     }
 
     var hasLiveAccounts: Bool { !live.isEmpty }
@@ -390,7 +386,7 @@ final class UsageModel {
             }
         }
 
-        let amount = Self.parseAmount(extraUsageAlertAmount)
+        let amount = SpendAlerts.amount(from: extraUsageAlertAmount)
         let fired = (defaults.dictionary(forKey: Self.firedSpendKey) as? [String: String] ?? [:])
             .compactMapValues { Decimal(string: $0) }
         let outcome = SpendAlerts.evaluate(accounts: liveAccounts, amount: amount, fired: fired)
@@ -471,8 +467,9 @@ final class UsageModel {
         live[configDir] = enabled ? LiveState() : nil
         if !enabled { LiveFetcher.forget(configDir: configDir) }
         UserDefaults.standard.set(Array(live.keys).sorted(), forKey: Self.liveDefaultsKey)
-        reload()
+        // Before reload, which would otherwise start a background check that can't read the Keychain.
         if enabled { refreshLive(configDir: configDir, interactive: true) }
+        reload()
     }
 
     /// `interactive` when the user asked (⟳ or switching Live on): only then may it read the
