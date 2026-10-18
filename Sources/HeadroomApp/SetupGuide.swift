@@ -375,10 +375,10 @@ private struct Para: View {
     var body: some View { Text(text).font(.callout).fixedSize(horizontal: false, vertical: true) }
 }
 
-private struct Note: View {
+struct Note: View {
     let text: String
     let color: Color
-    init(_ text: String, color: Color) {
+    init(_ text: String, color: Color = .secondary) {
         self.text = text
         self.color = color
     }
