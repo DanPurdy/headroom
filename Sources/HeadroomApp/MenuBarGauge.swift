@@ -76,6 +76,19 @@ struct MenuBarGauge: View {
         .frame(height: 8)
     }
 
+    /// Headroom's glyph as a template image, for the icon style and before any account has a
+    /// reading. Built from `assets/icon.svg` by `scripts/make-icon.sh`; the SF Symbol stands in
+    /// when running outside the app bundle.
+    @MainActor
+    static let icon: NSImage? = {
+        if let glyph = Bundle.main.image(forResource: "MenuBarIcon") {
+            glyph.isTemplate = true
+            glyph.accessibilityDescription = "Headroom"
+            return glyph
+        }
+        return NSImage(systemSymbolName: "gauge.with.dots.needle.33percent", accessibilityDescription: "Headroom")
+    }()
+
     /// A menu bar label can only be Text or Image, so render the gauge to a template image,
     /// which macOS tints to match a light or dark menu bar. nil when there's nothing to draw
     /// (no columns, or the icon style): the caller shows Headroom's icon instead.
