@@ -12,6 +12,8 @@ every Claude Code account on your Mac at once. More at
   column per account: its label beside two small bars with percentages, 5-hour on top and
   weekly below. Settings chooses which accounts appear there, and whether to show bars and
   percentages, bars only, or just an icon.
+
+  <img src="assets/screenshots/menu-bar.png" width="556" alt="Three menu bars: Claude and Codex columns with bars and percentages, the same with bars only, and Headroom's icon on its own">
 - **Pace** for each limit: a line showing how much of the window has passed, and when you'd
   run out if you carry on at the rate so far.
 

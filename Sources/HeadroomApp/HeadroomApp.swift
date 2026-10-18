@@ -58,8 +58,7 @@ final class StatusPanel: NSObject {
             Task { @MainActor in self?.updateButton() }
         }
         guard let button = statusItem.button else { return }
-        button.image = MenuBarGauge.image(for: columns, style: style)
-            ?? NSImage(systemSymbolName: "gauge.with.dots.needle.33percent", accessibilityDescription: "Headroom")
+        button.image = MenuBarGauge.image(for: columns, style: style) ?? MenuBarGauge.icon
         button.setAccessibilityLabel(description.isEmpty ? "Headroom" : description)
     }
 
