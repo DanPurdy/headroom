@@ -108,16 +108,18 @@ public struct AccountSnapshot: Codable, Equatable, Sendable {
 
     /// Combines readings from any number of sessions, in any order, keeping the newest of each
     /// window. A window missing from `incoming` tells us nothing, so the existing one stays, and
-    /// so do the Live-only fields when `incoming` is a status line reading.
+    /// so do the Live-only fields when `incoming` is a status line reading. A Live reading is
+    /// authoritative for them: extra usage switched off, say, clears it.
     public func merging(_ incoming: AccountSnapshot) -> AccountSnapshot {
-        AccountSnapshot(key: key, label: incoming.label, configDir: incoming.configDir,
-                        fiveHour: LimitWindow.newer(fiveHour, incoming.fiveHour),
-                        sevenDay: LimitWindow.newer(sevenDay, incoming.sevenDay),
-                        updatedAt: max(updatedAt, incoming.updatedAt),
-                        scoped: incoming.scoped ?? scoped,
-                        extraUsage: incoming.extraUsage ?? extraUsage,
-                        weeklyBreakdown: incoming.weeklyBreakdown ?? weeklyBreakdown,
-                        liveSamples: incoming.liveSamples ?? liveSamples,
+        let isLive = incoming.liveSamples != nil
+        return AccountSnapshot(key: key, label: incoming.label, configDir: incoming.configDir,
+                               fiveHour: LimitWindow.newer(fiveHour, incoming.fiveHour),
+                               sevenDay: LimitWindow.newer(sevenDay, incoming.sevenDay),
+                               updatedAt: max(updatedAt, incoming.updatedAt),
+                               scoped: isLive ? incoming.scoped : incoming.scoped ?? scoped,
+                               extraUsage: isLive ? incoming.extraUsage : incoming.extraUsage ?? extraUsage,
+                               weeklyBreakdown: isLive ? incoming.weeklyBreakdown : incoming.weeklyBreakdown ?? weeklyBreakdown,
+                               liveSamples: incoming.liveSamples ?? liveSamples,
                         plan: incoming.plan ?? plan)
     }
 
@@ -125,6 +127,12 @@ public struct AccountSnapshot: Codable, Equatable, Sendable {
     public static func liveSamples(_ samples: [UsageSample]?, adding sample: UsageSample, now: Date) -> [UsageSample] {
         let cutoff = now.addingTimeInterval(-SessionSnapshot.costHistory)
         return ((samples ?? []) + [sample]).filter { $0.at > cutoff }.sorted { $0.at < $1.at }
+    }
+
+    /// Drawing on extra usage: it's switched on and a plan window is full. Only Live knows
+    /// about extra usage, so this is meaningful for Live accounts.
+    public func isOnExtraUsage(at now: Date) -> Bool {
+        extraUsage != nil && LimitWindow.planLimitReached(fiveHour: fiveHour, sevenDay: sevenDay, at: now)
     }
 
     public func isStale(at now: Date) -> Bool {

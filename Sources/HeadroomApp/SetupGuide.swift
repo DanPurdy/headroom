@@ -197,7 +197,7 @@ struct SetupGuide: View {
         VStack(alignment: .leading, spacing: 12) {
             Title("Live usage (optional)")
             Para("Without Live, an account updates when Claude Code replies on it. Use from claude.ai, the desktop app or your phone counts towards the same limits, but only shows up after the next Claude Code reply.")
-            Para("Live also checks with Anthropic once an hour and when you press ⟳, so it catches use from anywhere. It adds your plan, a model's own weekly limit, and extra usage this month.")
+            Para("Live also checks with Anthropic once an hour (more often while the account is on extra usage, set in Settings) and when you press ⟳, so it catches use from anywhere. It adds your plan, a model's own weekly limit, and extra usage this month.")
             let connected = model.setupRows.filter(\.isConnected)
             if connected.isEmpty {
                 Note("Connect a Claude Code account first, or switch Live on later in Settings.", color: .secondary)
@@ -283,6 +283,8 @@ struct SetupGuide: View {
                 .toggleStyle(.switch)
                 .controlSize(.small)
             Note("Once a day, Headroom asks GitHub for the latest release. When there's a new one, it notifies you and you can install it from the menu.", color: .secondary)
+            Explainer(title: "Extra usage",
+                      text: "With Live on, Headroom also notifies you once when an account starts drawing on extra usage (Usage alerts must be on), and when this month's extra usage passes an amount you set in Settings.")
             Explainer(title: "Cache warnings",
                       text: "Click a session's 🔥 countdown in the menu to be notified before its prompt cache goes cold (5 minutes before a 1-hour cache, 2 before a 5-minute one), so you can reply while it's still cheap. The flame becomes a bell while it's watched. Click again to stop.")
         }
@@ -614,13 +616,13 @@ private struct GuideSamples {
     var live: AccountRow {
         var row = claude
         var state = LiveState()
-        state.lastSuccess = at(-5)
         state.plan = "max"
         row.live = state
         row.activeSessions = Array(row.activeSessions.prefix(1))
         row.snapshot?.scoped = [ScopedLimit(name: "Fable", window: LimitWindow(usedPercentage: 18, resetsAt: at(3 * 24 * 60)),
                                             length: LimitWindow.sevenDayLength)]
         row.snapshot?.extraUsage = ExtraUsage(used: Decimal(string: "4.20")!, limit: 20, currency: "USD")
+        row.snapshot?.liveSamples = [UsageSample(at: at(-5), usd: nil)]
         return row
     }
 

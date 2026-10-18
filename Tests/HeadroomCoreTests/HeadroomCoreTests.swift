@@ -1215,3 +1215,171 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         #expect(!LimitWindow.planLimitReached(fiveHour: full, sevenDay: nil, at: now.addingTimeInterval(61)))
     }
 }
+
+@Suite struct LiveSchedulingAndFreshness {
+    let now = Date(timeIntervalSince1970: 1738420000)
+    let gb = Locale(identifier: "en_GB")
+
+    func account(extra: ExtraUsage?, fiveHour: Double = 100, sevenDay: Double = 10) -> AccountSnapshot {
+        AccountSnapshot(key: "k", label: "Work", configDir: "/x",
+                        fiveHour: LimitWindow(usedPercentage: fiveHour, resetsAt: now.addingTimeInterval(3600)),
+                        sevenDay: LimitWindow(usedPercentage: sevenDay, resetsAt: now.addingTimeInterval(86400)),
+                        updatedAt: now, extraUsage: extra)
+    }
+
+    @Test func liveResultWithoutExtraUsageClearsIt() {
+        let before = account(extra: ExtraUsage(used: 4, limit: 20, currency: "GBP"))
+        var live = account(extra: nil)
+        live.liveSamples = [UsageSample(at: now, usd: nil)]
+        let merged = before.merging(live)
+        #expect(merged.extraUsage == nil)
+        #expect(merged.scoped == nil)
+        #expect(merged.weeklyBreakdown == nil)
+    }
+
+    @Test func statusLineReadingKeepsExtraUsage() {
+        let extra = ExtraUsage(used: 4, limit: 20, currency: "GBP")
+        #expect(account(extra: extra).merging(account(extra: nil)).extraUsage == extra)
+    }
+
+    @Test func onExtraUsageNeedsSpendAndAFullPlanWindow() {
+        let extra = ExtraUsage(used: 0, limit: nil, currency: "GBP")
+        #expect(account(extra: extra).isOnExtraUsage(at: now))
+        #expect(account(extra: extra, fiveHour: 50, sevenDay: 100).isOnExtraUsage(at: now))
+        #expect(!account(extra: extra, fiveHour: 50).isOnExtraUsage(at: now))
+        #expect(!account(extra: nil).isOnExtraUsage(at: now))
+        #expect(!account(extra: extra).isOnExtraUsage(at: now.addingTimeInterval(86401)))
+    }
+
+    @Test func intervalSwitchesWhenCrossingIntoExtraUsage() {
+        let extra = ExtraUsage(used: 1, limit: nil, currency: "GBP")
+        let before = account(extra: extra, fiveHour: 90)
+        let after = account(extra: extra, fiveHour: 100)
+        func interval(_ a: AccountSnapshot) -> TimeInterval {
+            LiveSchedule.interval(onExtraUsage: a.isOnExtraUsage(at: now), extraUsageInterval: 10 * 60)
+        }
+        #expect(interval(before) == UsageAPI.refreshInterval)
+        #expect(interval(after) == 10 * 60)
+    }
+
+    @Test func nextDue() {
+        let last = now.addingTimeInterval(-40 * 60)
+        #expect(LiveSchedule.nextDue(lastAttempt: nil, retryAt: nil, paused: false, interval: 1800) == nil)
+        #expect(LiveSchedule.nextDue(lastAttempt: last, retryAt: nil, paused: true, interval: 1800) == nil)
+        #expect(LiveSchedule.nextDue(lastAttempt: last, retryAt: nil, paused: false, interval: 1800) == last.addingTimeInterval(1800))
+        let retry = now.addingTimeInterval(300)
+        #expect(LiveSchedule.nextDue(lastAttempt: last, retryAt: retry, paused: false, interval: 1800) == retry)
+    }
+
+    @Test func overdueCheckIsDueNow() throws {
+        let last = now.addingTimeInterval(-40 * 60)
+        let due = try #require(LiveSchedule.nextDue(lastAttempt: last, retryAt: nil, paused: false, interval: 30 * 60))
+        #expect(due <= now)
+        // The same attempt isn't due under the hourly interval.
+        let hourly = try #require(LiveSchedule.nextDue(lastAttempt: last, retryAt: nil, paused: false, interval: UsageAPI.refreshInterval))
+        #expect(hourly > now)
+    }
+
+    @Test func backoffDoublesFromFiveMinutesAndCapsAtAnHour() {
+        #expect(LiveSchedule.backoff(consecutiveRateLimits: 1, retryAfter: nil) == 300)
+        #expect(LiveSchedule.backoff(consecutiveRateLimits: 2, retryAfter: nil) == 600)
+        #expect(LiveSchedule.backoff(consecutiveRateLimits: 3, retryAfter: nil) == 1200)
+        #expect(LiveSchedule.backoff(consecutiveRateLimits: 9, retryAfter: nil) == 3600)
+        #expect(LiveSchedule.backoff(consecutiveRateLimits: 1, retryAfter: 900) == 900)
+        #expect(LiveSchedule.backoff(consecutiveRateLimits: 1, retryAfter: 99999) == 3600)
+        #expect(LiveSchedule.backoff(consecutiveRateLimits: 0, retryAfter: nil) == 300)
+    }
+
+    // MARK: - Extra-usage notifications
+
+    func starts(_ accounts: [AccountSnapshot], fired: [String: Date] = [:], at time: Date? = nil) -> LimitAlerts.Outcome {
+        ExtraUsageAlerts.evaluate(accounts, fired: fired, now: time ?? now)
+    }
+
+    @Test func startedFiresOncePerPeriodAndAgainInTheNext() {
+        let extra = ExtraUsage(used: 4.2, limit: 20, currency: "GBP")
+        let first = starts([account(extra: extra)])
+        #expect(first.crossed.map(\.window) == [.fiveHour])
+        let again = starts([account(extra: extra)], fired: first.fired, at: now.addingTimeInterval(120))
+        #expect(again.crossed.isEmpty)
+
+        let afterReset = now.addingTimeInterval(3601)
+        let reset = starts([account(extra: extra, fiveHour: 0)], fired: first.fired, at: afterReset)
+        #expect(reset.crossed.isEmpty)
+        var next = account(extra: extra)
+        next.fiveHour = LimitWindow(usedPercentage: 100, resetsAt: afterReset.addingTimeInterval(5 * 3600))
+        #expect(starts([next], fired: reset.fired, at: afterReset).crossed.count == 1)
+    }
+
+    @Test func startedToleratesResetTimeJitter() {
+        let extra = ExtraUsage(used: 4.2, limit: nil, currency: "GBP")
+        let first = starts([account(extra: extra)])
+        var jittered = account(extra: extra)
+        jittered.fiveHour = LimitWindow(usedPercentage: 100, resetsAt: now.addingTimeInterval(3604))
+        #expect(starts([jittered], fired: first.fired, at: now.addingTimeInterval(60)).crossed.isEmpty)
+    }
+
+    @Test func startedNeedsExtraUsage() {
+        #expect(starts([account(extra: nil)]).crossed.isEmpty)
+        #expect(starts([account(extra: ExtraUsage(used: 1, limit: nil, currency: "GBP"), fiveHour: 99)]).crossed.isEmpty)
+    }
+
+    @Test func startedNoticeNamesTheCacheAndTheLaterReset() throws {
+        let extra = ExtraUsage(used: 4.2, limit: 20, currency: "GBP")
+        let acct = account(extra: extra, fiveHour: 100, sevenDay: 100)
+        let outcome = starts([acct])
+        let notice = try #require(ExtraUsageAlerts.notices(for: outcome.crossed, accounts: [acct], now: now, locale: gb).first)
+        #expect(outcome.crossed.count == 2)
+        #expect(ExtraUsageAlerts.notices(for: outcome.crossed, accounts: [acct], now: now, locale: gb).count == 1)
+        #expect(notice.title == "Work: now on extra usage")
+        #expect(notice.body == "£4.20 of £20.00 used this month. Claude Code uses the 5-minute prompt cache until the weekly limit resets in 1d.")
+        #expect(notice.id.hasPrefix("extra-"))
+    }
+
+    @Test func startedNoticeWithoutACap() throws {
+        let acct = account(extra: ExtraUsage(used: 0, limit: nil, currency: "GBP"))
+        let outcome = starts([acct])
+        let notice = try #require(ExtraUsageAlerts.notices(for: outcome.crossed, accounts: [acct], now: now, locale: gb).first)
+        #expect(notice.body == "£0.00 used this month. Claude Code uses the 5-minute prompt cache until the 5-hour limit resets in 1h.")
+    }
+
+    @Test func amountFiresOnceThenRearmsAfterTheMonthlyReset() {
+        let over = account(extra: ExtraUsage(used: 12, limit: 50, currency: "GBP"))
+        let first = SpendAlerts.evaluate(accounts: [over], amount: 10, fired: [:])
+        #expect(first.due.map(\.accountKey) == ["k"])
+        let second = SpendAlerts.evaluate(accounts: [over], amount: 10, fired: first.fired)
+        #expect(second.due.isEmpty)
+        let more = account(extra: ExtraUsage(used: 15, limit: 50, currency: "GBP"))
+        #expect(SpendAlerts.evaluate(accounts: [more], amount: 10, fired: second.fired).due.isEmpty)
+
+        let newMonth = account(extra: ExtraUsage(used: 0, limit: 50, currency: "GBP"))
+        let reset = SpendAlerts.evaluate(accounts: [newMonth], amount: 10, fired: second.fired)
+        #expect(reset.due.isEmpty)
+        #expect(reset.fired.isEmpty)
+        #expect(SpendAlerts.evaluate(accounts: [over], amount: 10, fired: reset.fired).due.count == 1)
+    }
+
+    @Test func changingTheAmountRearms() {
+        let over = account(extra: ExtraUsage(used: 12, limit: nil, currency: "GBP"))
+        let first = SpendAlerts.evaluate(accounts: [over], amount: 10, fired: [:])
+        #expect(SpendAlerts.evaluate(accounts: [over], amount: 5, fired: first.fired).due.count == 1)
+        #expect(SpendAlerts.evaluate(accounts: [over], amount: 11.5, fired: first.fired).due.count == 1)
+    }
+
+    @Test func amountOffOrNoExtraUsageDoesNothing() {
+        let over = account(extra: ExtraUsage(used: 12, limit: nil, currency: "GBP"))
+        #expect(SpendAlerts.evaluate(accounts: [over], amount: nil, fired: ["k": 10]).due.isEmpty)
+        #expect(SpendAlerts.evaluate(accounts: [over], amount: nil, fired: ["k": 10]).fired.isEmpty)
+        #expect(SpendAlerts.evaluate(accounts: [account(extra: nil)], amount: 10, fired: [:]).due.isEmpty)
+        #expect(SpendAlerts.evaluate(accounts: [over], amount: 0, fired: [:]).due.isEmpty)
+    }
+
+    @Test func amountNoticeUsesTheAccountsCurrency() throws {
+        let usd = account(extra: ExtraUsage(used: 12.5, limit: 50, currency: "USD"))
+        let outcome = SpendAlerts.evaluate(accounts: [usd], amount: 10, fired: [:])
+        let notice = try #require(SpendAlerts.notices(for: outcome, amount: 10, locale: Locale(identifier: "en_US")).first)
+        #expect(notice.title == "Work: extra usage passed $10.00")
+        #expect(notice.body == "$12.50 of $50.00 used this month.")
+        #expect(notice.id.hasPrefix("spend-"))
+    }
+}

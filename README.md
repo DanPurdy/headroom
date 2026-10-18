@@ -116,7 +116,8 @@ with an orange "as of" age so you can tell.
 
 ### Live usage (optional, per account)
 
-Live also checks an account's usage once an hour and whenever you press ⟳ on its card, so
+Live also checks an account's usage once an hour (more often while the account is on extra
+usage, see below) and whenever you press ⟳ on its card, so
 it catches use from anywhere: claude.ai, the desktop app, mobile and other machines. Its
 readings go into History too, so use from elsewhere isn't counted against the next Claude
 Code conversation.
@@ -125,14 +126,22 @@ Code conversation.
   only then or when you press ⟳, never in the background. macOS asks for your password each
   time: Claude Code rewrites its saved login whenever it renews it, which removes Headroom's
   access, so **Always Allow** doesn't last.
-- The login is kept in memory, not on disk, and the hourly checks reuse it. When it expires,
+- The login is kept in memory, not on disk, and the checks reuse it. When it expires,
   or after Headroom restarts, Live pauses until you press ⟳.
 - It sends that login to `https://api.anthropic.com/api/oauth/usage`, the undocumented
   endpoint behind Claude Code's `/usage`. Being undocumented, it could change without notice.
 - Headroom only reads the login. It never refreshes or replaces it, so it can't log Claude
   Code out. If the saved login has expired, Live says so until Claude Code next runs on that
   account and you press ⟳.
-- If Anthropic rate-limits the check, Headroom waits at least 5 minutes before trying again.
+- If Anthropic rate-limits the check, Headroom waits at least 5 minutes before trying again,
+  and longer if it keeps being rate-limited.
+- While an account's plan limit is full and it is spending extra usage, Live checks every 30
+  minutes instead of hourly. Settings has a slider from 5 to 60 minutes. Each card shows
+  "Live checked 12m ago", so you can tell how fresh the plan, model limit and extra usage
+  figures are.
+- Extra usage notifications (with Usage alerts on): once when an account starts drawing on
+  extra usage, which also means Claude Code is on the 5-minute prompt cache, and once when
+  this month's extra usage passes an amount you set in Settings.
 
 ### Codex (optional, per account)
 

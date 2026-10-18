@@ -144,6 +144,12 @@ struct AccountCard: View {
                         .background(.quaternary, in: Capsule())
                 }
                 Spacer()
+                if let checked = row.snapshot?.liveSamples?.last?.at, row.live != nil {
+                    Text("Live checked \(Formatting.age(of: checked, at: now))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .help("When Live last asked Anthropic; covers the plan, model limits and extra usage")
+                }
                 if let snapshot = row.snapshot {
                     Text(row.isStale ? "as of \(Formatting.age(of: snapshot.updatedAt, at: now))"
                                      : "updated \(Formatting.age(of: snapshot.updatedAt, at: now))")

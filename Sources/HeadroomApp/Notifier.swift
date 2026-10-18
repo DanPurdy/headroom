@@ -27,8 +27,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         await center.notificationSettings().authorizationStatus == .authorized
     }
 
-    func deliver(_ outcome: LimitAlerts.Outcome) {
-        for notice in LimitAlerts.notices(for: outcome, now: Date()) {
+    func deliver(_ notices: [LimitAlerts.Notice]) {
+        for notice in notices {
             post(id: notice.id, title: notice.title, body: notice.body)
         }
     }
