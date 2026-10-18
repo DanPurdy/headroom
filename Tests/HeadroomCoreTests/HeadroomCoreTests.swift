@@ -849,6 +849,18 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         #expect(Formatting.money(Decimal(string: "12.34")!, "GBP", locale: Locale(identifier: "en_GB")) == "£12.34")
     }
 
+    @Test func outlook() throws {
+        let fast = LimitWindow(usedPercentage: 50, resetsAt: now.addingTimeInterval(4 * 3600))
+        let pace = try #require(fast.pace(length: LimitWindow.fiveHourLength, at: now))
+        #expect(Formatting.outlook(pace, at: now) == "On course to run out in 1h")
+        let out = LimitWindow(usedPercentage: 100, resetsAt: now.addingTimeInterval(20 * 3600))
+        let outPace = try #require(out.pace(length: LimitWindow.sevenDayLength, at: now))
+        #expect(Formatting.outlook(outPace, at: now) == "Out of headroom until it resets")
+        let steady = LimitWindow(usedPercentage: 40, resetsAt: now.addingTimeInterval(3 * 3600))
+        let steadyPace = try #require(steady.pace(length: LimitWindow.fiveHourLength, at: now))
+        #expect(Formatting.outlook(steadyPace, at: now) == nil)
+    }
+
     @Test func tokens() {
         #expect(Formatting.tokens(850) == "850")
         #expect(Formatting.tokens(45_400) == "45k")

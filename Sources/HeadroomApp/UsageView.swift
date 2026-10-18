@@ -280,8 +280,8 @@ struct LimitBar: View {
                 }
             }
             .frame(height: 6)
-            if let limitAt = pace?.limitAt {
-                Text("On course to run out in \(Formatting.countdown(until: limitAt, from: now))")
+            if let outlook = pace.flatMap({ Formatting.outlook($0, at: now) }) {
+                Text(outlook)
                     .font(.caption2)
                     .foregroundStyle(.orange)
             }
