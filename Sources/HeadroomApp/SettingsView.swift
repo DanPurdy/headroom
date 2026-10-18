@@ -210,35 +210,54 @@ struct LiveIntervalSetting: View {
 /// Notify once this month's extra usage passes an amount.
 struct SpendAlertSetting: View {
     let model: UsageModel
+    @State private var enabled: Bool
     @State private var amount: String
     @FocusState private var editingAmount: Bool
 
+    private static let defaultAmount = "100"
+
     init(model: UsageModel) {
         self.model = model
-        _amount = State(initialValue: model.extraUsageAlertAmount)
+        _enabled = State(initialValue: !model.extraUsageAlertAmount.isEmpty)
+        _amount = State(initialValue: model.extraUsageAlertAmount.isEmpty ? Self.defaultAmount : model.extraUsageAlertAmount)
+    }
+
+    /// The Live accounts' currency, when they share one.
+    private var currency: String? {
+        let currencies = Set(model.accounts.filter { $0.live != nil }.compactMap { $0.snapshot?.extraUsage?.currency })
+        return currencies.count == 1 ? currencies.first : nil
     }
 
     var body: some View {
-        HStack {
-            Text("Notify when extra usage passes")
-            TextField("Amount", text: $amount, prompt: Text("Off"))
+        HStack(spacing: 4) {
+            Toggle("Notify when extra usage passes", isOn: Binding(get: { enabled }, set: { enabled = $0; save() }))
+                .toggleStyle(.checkbox)
+            if let currency {
+                Text(Formatting.currencySymbol(currency))
+                    .foregroundStyle(enabled ? .primary : .secondary)
+            }
+            TextField("Amount", text: $amount, prompt: Text(Self.defaultAmount))
                 .labelsHidden()
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 70)
+                .disabled(!enabled)
                 .focused($editingAmount)
                 .onSubmit(save)
                 .onChange(of: editingAmount) { _, editing in if !editing { save() } }
                 .onDisappear(perform: save)
-                .help("This month's spend, in each account's own currency. Empty is off. Saved when you press Return or click away.")
         }
         .controlSize(.small)
         .font(.callout)
+        .help("Once a month per account, when its extra usage spend passes this amount, in its own currency. Saved when you press Return or click away.")
     }
 
     private func save() {
-        if SpendAlerts.amount(from: amount) == nil { amount = "" }
-        if amount.trimmingCharacters(in: .whitespaces) != model.extraUsageAlertAmount {
-            model.setExtraUsageAlertAmount(amount)
+        if SpendAlerts.amount(from: amount) == nil {
+            amount = model.extraUsageAlertAmount.isEmpty ? Self.defaultAmount : model.extraUsageAlertAmount
+        }
+        let saved = enabled ? amount.trimmingCharacters(in: .whitespaces) : ""
+        if saved != model.extraUsageAlertAmount {
+            model.setExtraUsageAlertAmount(saved)
         }
     }
 }

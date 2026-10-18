@@ -1347,6 +1347,12 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         #expect(notice.body.hasSuffix("until the weekly limit resets in 1d."))
     }
 
+    @Test func currencySymbolsForTheAmountField() {
+        #expect(Formatting.currencySymbol("GBP", locale: gb) == "£")
+        #expect(Formatting.currencySymbol("USD", locale: Locale(identifier: "en_US")) == "$")
+        #expect(Formatting.currencySymbol("EUR", locale: Locale(identifier: "de_DE")) == "€")
+    }
+
     @Test func amountReadsWhatPeopleType() {
         #expect(SpendAlerts.amount(from: "150", locale: gb) == 150)
         #expect(SpendAlerts.amount(from: "£150.50", locale: gb) == Decimal(string: "150.50"))
