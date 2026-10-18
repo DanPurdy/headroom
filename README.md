@@ -22,7 +22,8 @@ every Claude Code account on your Mac at once. More at
   haven't replied for 15 minutes are marked idle.
 - **Prompt cache countdown** per session: how long until the conversation's cache goes cold,
   after which the next message re-reads the whole conversation at full price. Click it to be
-  notified 5 minutes before. A warning marks a session whose cache missed in the last hour,
+  notified 5 minutes before a 1-hour cache goes cold, or 2 before a 5-minute one; hover a
+  session to see which it has. A warning marks a session whose cache missed in the last hour,
   with Claude Code's guess at why. Needs Claude Code 2.1.251 or later.
 
   <img src="assets/screenshots/cache.png" width="312" alt="Three open sessions: one with 47 minutes of cache left and a warning, one being watched with 4 minutes left, and one whose cache has gone cold">

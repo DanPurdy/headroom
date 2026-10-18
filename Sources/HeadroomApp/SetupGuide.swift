@@ -284,7 +284,7 @@ struct SetupGuide: View {
                 .controlSize(.small)
             Note("Once a day, Headroom asks GitHub for the latest release. When there's a new one, it notifies you and you can install it from the menu.", color: .secondary)
             Explainer(title: "Cache warnings",
-                      text: "Click a session's 🔥 countdown in the menu to be notified 5 minutes before its prompt cache goes cold, so you can reply while it's still cheap. The flame becomes a bell while it's watched. Click again to stop.")
+                      text: "Click a session's 🔥 countdown in the menu to be notified before its prompt cache goes cold (5 minutes before a 1-hour cache, 2 before a 5-minute one), so you can reply while it's still cheap. The flame becomes a bell while it's watched. Click again to stop.")
         }
     }
 

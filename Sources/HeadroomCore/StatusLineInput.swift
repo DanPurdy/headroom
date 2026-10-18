@@ -38,6 +38,8 @@ public struct StatusLineInput: Decodable, Sendable {
         }
 
         public var warm: Bool?
+        /// "5m" or "1h": which cache Claude Code is using.
+        public var ttl: String?
         public var expiresAt: Double?
         public var recacheTokensIfCold: Double?
         public var hitRatio: Double?

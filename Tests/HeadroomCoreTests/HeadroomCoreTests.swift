@@ -301,6 +301,24 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
             hitRatio: 0.91, misses: 2, lastMissAt: Date(timeIntervalSince1970: 1738425230), lastMissCauses: ["tools_changed"]))
     }
 
+    @Test func cacheTTLSurvivesTheStore() throws {
+        let store = SnapshotStore(paths: tempPaths())
+        try StatusLineRecorder(store: store).record(Data(sampleInput.utf8), configDir: "/x", label: "Work", process: nil,
+                                                    now: Date(timeIntervalSince1970: 1738420000))
+        #expect(store.sessions().first?.cacheTTLRaw == "1h")
+        #expect(store.sessions().first?.cacheTTL == .oneHour)
+    }
+
+    @Test func unknownCacheTTLStillLoadsTheSession() throws {
+        let store = SnapshotStore(paths: tempPaths())
+        let unknown = sampleInput.replacingOccurrences(of: "\"ttl\": \"1h\"", with: "\"ttl\": \"7m\"")
+        try StatusLineRecorder(store: store).record(Data(unknown.utf8), configDir: "/x", label: "Work", process: nil,
+                                                    now: Date(timeIntervalSince1970: 1738420000))
+        #expect(store.sessions().map(\.sessionId) == ["abc-123"])
+        #expect(store.sessions().first?.cacheTTLRaw == "7m")
+        #expect(store.sessions().first?.cacheTTL == nil)
+    }
+
     @Test func recorderDatesReadingsByLastReply() throws {
         let store = SnapshotStore(paths: tempPaths())
         let now = Date(timeIntervalSince1970: 1738420000)
@@ -683,6 +701,23 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         let due = CacheAlerts.due(sessions, watched: ["a", "c", "d"], now: now)
         #expect(due == [CacheAlerts.Alert(sessionId: "a", fireAt: now.addingTimeInterval(3600 - CacheAlerts.lead))])
         #expect(sessions[0].displayName == "app")
+    }
+
+    @Test func cacheAlertLeadFollowsTheCacheType() {
+        func session(_ ttl: String?) -> SessionSnapshot {
+            SessionSnapshot(sessionId: "a", accountKey: "k", name: nil, projectDir: "/work/app", model: nil, costUSD: nil,
+                            contextPercentage: nil, process: nil, firstSeenAt: now, updatedAt: now,
+                            cacheExpiresAt: now.addingTimeInterval(3600), recacheTokens: 302_000, cacheTTLRaw: ttl)
+        }
+        func fireAt(_ ttl: String?) -> Date? { CacheAlerts.due([session(ttl)], watched: ["a"], now: now).first?.fireAt }
+        #expect(fireAt("5m") == now.addingTimeInterval(3600 - 120))
+        #expect(fireAt("1h") == now.addingTimeInterval(3600 - 300))
+        #expect(fireAt(nil) == now.addingTimeInterval(3600 - 300))
+        #expect(fireAt("7m") == now.addingTimeInterval(3600 - 300))
+        #expect(CacheAlerts.notice(for: session("5m")).title == "app: cache goes cold in 2 minutes")
+        #expect(CacheAlerts.notice(for: session("1h")).title == "app: cache goes cold in 5 minutes")
+        #expect(CacheAlerts.notice(for: session(nil)).body == "After that, the next message re-reads 302k tokens at full price.")
+        #expect(CacheAlerts.notice(for: session(nil)).id == "cache-a")
     }
 }
 
@@ -1078,5 +1113,105 @@ func settingsJSON(_ dir: String) throws -> [String: Any] {
         }
         let found = CodexHome.detect(home: home.path, environment: ["CODEX_HOME": "/elsewhere/codex"])
         #expect(found.map { URL(fileURLWithPath: $0).lastPathComponent } == [".codex", ".codex-work", "codex"])
+    }
+}
+
+@Suite struct SessionTooltips {
+    let now = Date(timeIntervalSince1970: 1738420000)
+
+    func session(ttl: String? = "1h", expiresIn: TimeInterval? = 1800, samples: [UsageSample]? = nil,
+                 health: CacheHealth? = nil, replied: TimeInterval? = 300) -> SessionSnapshot {
+        SessionSnapshot(sessionId: "a", accountKey: "k", name: nil, projectDir: "/work/app", model: nil, costUSD: nil,
+                        contextPercentage: nil, process: nil, lastReplyAt: replied.map { now.addingTimeInterval(-$0) },
+                        firstSeenAt: now, updatedAt: now, samples: samples,
+                        cacheExpiresAt: expiresIn.map { now.addingTimeInterval($0) }, recacheTokens: 302_000,
+                        cacheHealth: health, cacheTTLRaw: ttl)
+    }
+
+    func full(at: Date, resetsIn: TimeInterval = 3600) -> UsageSample {
+        UsageSample(at: at, usd: 1, fiveHour: LimitWindow(usedPercentage: 100, resetsAt: at.addingTimeInterval(resetsIn)))
+    }
+
+    func tooltip(_ s: SessionSnapshot, watched: Bool = false, canWatch: Bool = true) -> String {
+        SessionSummary.tooltip(session: s, now: now, watched: watched, canWatch: canWatch)
+    }
+
+    @Test func oneHourWarm() {
+        let expires = now.addingTimeInterval(1800).formatted(date: .omitted, time: .shortened)
+        #expect(tooltip(session()) == """
+            app
+            /work/app · last reply 5m ago
+            Prompt cache (1-hour): warm until \(expires). Reply before then and the conversation is re-read cheaply; after it, the next message re-reads 302k tokens at full price.
+            Click 🔥 to be notified 5 minutes before it goes cold.
+            """)
+    }
+
+    @Test func fiveMinuteWarmPastPlanLimitsSaysWhy() {
+        let text = tooltip(session(ttl: "5m", expiresIn: 200, samples: [full(at: now.addingTimeInterval(-60))]))
+        #expect(text.contains("Prompt cache (5-minute): warm until"))
+        #expect(text.contains("This account is past its plan limits, so Claude Code uses the 5-minute cache."))
+        #expect(text.contains("Click 🔥 to be notified 2 minutes before it goes cold."))
+    }
+
+    @Test func fiveMinuteWarmWithinLimitsDoesNotBlameThem() {
+        let low = UsageSample(at: now, usd: 1, fiveHour: LimitWindow(usedPercentage: 40, resetsAt: now.addingTimeInterval(3600)))
+        let text = tooltip(session(ttl: "5m", expiresIn: 250, samples: [low]))
+        #expect(text.contains("Prompt cache (5-minute)"))
+        #expect(!text.contains("plan limits"))
+    }
+
+    @Test func causeIsJudgedWhenTheCacheWasChosenNotNow() {
+        let text = tooltip(session(ttl: "5m", expiresIn: 250, samples: [full(at: now.addingTimeInterval(-600), resetsIn: 300)]))
+        #expect(text.contains("This account is past its plan limits"))
+    }
+
+    @Test func latestSampleWithAWindowDecides() {
+        let earlier = full(at: now.addingTimeInterval(-600))
+        let later = UsageSample(at: now.addingTimeInterval(-60), usd: 2,
+                                fiveHour: LimitWindow(usedPercentage: 10, resetsAt: now.addingTimeInterval(3600)))
+        let costOnly = UsageSample(at: now, usd: 3)
+        #expect(!tooltip(session(ttl: "5m", samples: [earlier, later, costOnly])).contains("plan limits"))
+    }
+
+    @Test func coldCache() {
+        let text = tooltip(session(expiresIn: -10))
+        #expect(text.contains("Prompt cache: cold. The next message re-reads 302k tokens at full price."))
+        #expect(!text.contains("Click 🔥"))
+    }
+
+    @Test func recentMissAndHitRate() {
+        let health = CacheHealth(hitRatio: 0.91, misses: 2, lastMissAt: now.addingTimeInterval(-1200),
+                                 lastMissCauses: ["ttl_expired_5m"])
+        let text = tooltip(session(health: health))
+        #expect(text.contains("Hit rate 91%, 2 misses."))
+        #expect(text.contains("⚠️ Cache miss 20m ago (the 5-minute cache expired): a message re-read the conversation at full price."))
+        let old = CacheHealth(hitRatio: 0.91, misses: 1, lastMissAt: now.addingTimeInterval(-7200), lastMissCauses: [])
+        #expect(!tooltip(session(health: old)).contains("⚠️"))
+    }
+
+    @Test func clickHintDependsOnWatchingAndLead() {
+        #expect(tooltip(session(), watched: true).hasSuffix("Click the bell to stop notifying."))
+        #expect(!tooltip(session(), canWatch: false).contains("Click"))
+        #expect(!tooltip(session(ttl: "1h", expiresIn: 200)).contains("Click"))
+        #expect(tooltip(session(ttl: "5m", expiresIn: 200)).contains("Click 🔥"))
+    }
+
+    @Test func unknownCacheTypeHasNoLabelAndAFiveMinuteLead() {
+        let text = tooltip(session(ttl: nil))
+        #expect(text.contains("Prompt cache: warm until"))
+        #expect(text.contains("notified 5 minutes before"))
+    }
+
+    @Test func noCacheLinesWithoutCacheData() {
+        let text = tooltip(session(ttl: nil, expiresIn: nil, replied: nil))
+        #expect(text == "app\n/work/app · no reply seen yet")
+    }
+
+    @Test func planLimitReached() {
+        let full = LimitWindow(usedPercentage: 100, resetsAt: now.addingTimeInterval(60))
+        let partial = LimitWindow(usedPercentage: 99, resetsAt: now.addingTimeInterval(60))
+        #expect(LimitWindow.planLimitReached(fiveHour: partial, sevenDay: full, at: now))
+        #expect(!LimitWindow.planLimitReached(fiveHour: partial, sevenDay: nil, at: now))
+        #expect(!LimitWindow.planLimitReached(fiveHour: full, sevenDay: nil, at: now.addingTimeInterval(61)))
     }
 }

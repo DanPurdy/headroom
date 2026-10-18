@@ -54,9 +54,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         center.removePendingNotificationRequests(withIdentifiers: dropped.map(Self.cacheID))
         for (id, fireAt) in wanted where scheduled[id] != fireAt {
             guard let session = sessions.first(where: { $0.sessionId == id }) else { continue }
-            let recache = session.recacheTokens.map { "re-reads \(Formatting.tokens($0)) tokens" } ?? "re-reads the conversation"
-            post(id: Self.cacheID(id), title: "\(session.displayName): cache goes cold in 5 minutes",
-                 body: "After that, the next message \(recache) at full price.", at: fireAt)
+            let notice = CacheAlerts.notice(for: session)
+            post(id: Self.cacheID(id), title: notice.title, body: notice.body, at: fireAt)
         }
         scheduled = wanted
     }
