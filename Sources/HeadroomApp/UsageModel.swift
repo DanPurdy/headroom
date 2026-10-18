@@ -95,6 +95,9 @@ final class UsageModel {
     private(set) var updateCheckResult: String?
     private(set) var checkingForUpdates = false
     private(set) var checksForUpdates = UserDefaults.standard.object(forKey: UsageModel.checkUpdatesKey) as? Bool ?? true
+    private(set) var menuBarStyle = UserDefaults.standard.string(forKey: UsageModel.menuBarStyleKey).flatMap(MenuBarStyle.init) ?? .bars
+    /// Accounts (by key) left out of the menu bar; new accounts start shown.
+    private(set) var hiddenMenuBarAccounts = Set(UserDefaults.standard.stringArray(forKey: UsageModel.hiddenMenuBarKey) ?? [])
 
     @ObservationIgnored private let store = SnapshotStore()
     @ObservationIgnored private let installer = Installer()
@@ -123,6 +126,8 @@ final class UsageModel {
     private static let checkUpdatesKey = "checkForUpdates"
     private static let lastUpdateCheckKey = "lastUpdateCheck"
     private static let announcedUpdateKey = "announcedUpdate"
+    private static let menuBarStyleKey = "menuBarStyle"
+    private static let hiddenMenuBarKey = "hiddenMenuBarAccounts"
 
     @ObservationIgnored private var addedDirs: [String] = UserDefaults.standard.stringArray(forKey: UsageModel.addedDefaultsKey) ?? []
     /// Tracked Codex homes and their labels.
@@ -154,10 +159,10 @@ final class UsageModel {
         checkForUpdatesIfDue()
     }
 
-    /// One menu bar column per account with a reading. A window never seen counts as 0%.
+    /// One menu bar column per shown account with a reading. A window never seen counts as 0%.
     var menuBarColumns: [MenuBarGauge.Column] {
         accounts.compactMap { row in
-            guard let snapshot = row.snapshot else { return nil }
+            guard let snapshot = row.snapshot, !hiddenMenuBarAccounts.contains(row.key) else { return nil }
             return MenuBarGauge.Column(id: row.key, label: row.label,
                                        fiveHour: snapshot.fiveHour?.usedPercentage(at: now) ?? 0,
                                        weekly: snapshot.sevenDay?.usedPercentage(at: now) ?? 0,
@@ -170,6 +175,16 @@ final class UsageModel {
         menuBarColumns.map {
             "\($0.label) 5-hour \(Formatting.percent($0.fiveHour)), weekly \(Formatting.percent($0.weekly))\($0.stale ? ", out of date" : "")"
         }.joined(separator: "; ")
+    }
+
+    func setMenuBarStyle(_ style: MenuBarStyle) {
+        menuBarStyle = style
+        UserDefaults.standard.set(style.rawValue, forKey: Self.menuBarStyleKey)
+    }
+
+    func setShownInMenuBar(_ key: String, _ shown: Bool) {
+        if shown { hiddenMenuBarAccounts.remove(key) } else { hiddenMenuBarAccounts.insert(key) }
+        UserDefaults.standard.set(Array(hiddenMenuBarAccounts).sorted(), forKey: Self.hiddenMenuBarKey)
     }
 
     func install(configDir: String, label: String) {

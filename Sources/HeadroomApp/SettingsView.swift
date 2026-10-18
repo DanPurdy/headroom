@@ -56,6 +56,38 @@ struct SettingsPage: View {
 
             Divider()
 
+            Text("Menu bar")
+                .font(.subheadline.weight(.semibold))
+            Picker("Show", selection: Binding(get: { model.menuBarStyle }, set: { model.setMenuBarStyle($0) })) {
+                ForEach(MenuBarStyle.allCases) { style in
+                    Text(style.title).tag(style)
+                }
+            }
+            .pickerStyle(.menu)
+            .fixedSize()
+            .controlSize(.small)
+            .font(.callout)
+            .help("How much the menu bar item shows. The dropdown always shows everything.")
+            if model.menuBarStyle != .icon, !model.accounts.isEmpty {
+                Text("Accounts in the menu bar")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ForEach(model.accounts) { row in
+                    Toggle(isOn: Binding(get: { !model.hiddenMenuBarAccounts.contains(row.key) },
+                                         set: { model.setShownInMenuBar(row.key, $0) })) {
+                        HStack(spacing: 5) {
+                            Circle().fill(row.tint).frame(width: 7, height: 7)
+                            Text(row.label)
+                        }
+                    }
+                    .toggleStyle(.checkbox)
+                    .controlSize(.small)
+                    .font(.callout)
+                }
+            }
+
+            Divider()
+
             Toggle("Launch at login", isOn: Binding(get: { model.launchAtLogin },
                                                     set: { model.setLaunchAtLogin($0) }))
                 .toggleStyle(.switch)

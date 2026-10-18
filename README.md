@@ -10,7 +10,8 @@ every Claude Code account on your Mac at once. More at
 
 - **5-hour and weekly limits** per account, with reset countdowns. The menu bar shows one
   column per account: its label beside two small bars with percentages, 5-hour on top and
-  weekly below.
+  weekly below. Settings chooses which accounts appear there, and whether to show bars and
+  percentages, bars only, or just an icon.
 - **Pace** for each limit: a line showing how much of the window has passed, and when you'd
   run out if you carry on at the rate so far.
 
@@ -77,7 +78,9 @@ Skip it if you like; it's under **Setup guide…** in Settings. To set up by han
 4. Send a message in Claude Code on that account. Its usage appears straight away.
 5. Optionally switch on **Live usage** for an account (see below), **Launch at login** and
    **Usage alerts**.
-6. For Codex, press **Track** on a folder under **Codex accounts** (see below).
+6. Under **Menu bar**, untick accounts you don't need in the menu bar, or switch to **Bars
+   only** or **Icon only** to keep it small. The dropdown always shows every account.
+7. For Codex, press **Track** on a folder under **Codex accounts** (see below).
 
 **Connect** edits the `statusLine` setting in that folder's `settings.json` so Headroom sees
 each reply. Your existing status line keeps working exactly as before. A copy of the

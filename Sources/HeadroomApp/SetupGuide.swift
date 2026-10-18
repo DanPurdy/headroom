@@ -218,7 +218,7 @@ struct SetupGuide: View {
     private var reading: some View {
         VStack(alignment: .leading, spacing: 10) {
             Title("Reading a card")
-            Para("Each account gets a card, and a column in the menu bar: 5-hour usage on top, weekly underneath.")
+            Para("Each account gets a card, and a column in the menu bar: 5-hour usage on top, weekly underneath. Settings → Menu bar can leave accounts out of the menu bar, or shrink it to bars only or just an icon.")
             Legend {
                 LegendBar()
             } text: { Text("How much of the limit you've used, in Claude's colour or Codex's blue. It turns red from 90%.") }
