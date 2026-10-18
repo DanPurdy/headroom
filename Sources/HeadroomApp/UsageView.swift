@@ -144,6 +144,14 @@ struct AccountCard: View {
                         .background(.quaternary, in: Capsule())
                 }
                 Spacer()
+                // Right after a check this matches "updated", so it only shows once Live lags behind.
+                if let snapshot = row.snapshot, row.live != nil, let checked = snapshot.liveSamples?.last?.at,
+                   snapshot.updatedAt.timeIntervalSince(checked) > 60 {
+                    Text("Live checked \(Formatting.age(of: checked, at: now))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .help("When Live last asked Anthropic; covers the plan, model limits and extra usage")
+                }
                 if let snapshot = row.snapshot {
                     Text(row.isStale ? "as of \(Formatting.age(of: snapshot.updatedAt, at: now))"
                                      : "updated \(Formatting.age(of: snapshot.updatedAt, at: now))")
@@ -305,11 +313,9 @@ struct SessionLine: View {
     var body: some View {
         HStack(spacing: 6) {
             Circle().fill(idle ? Color.secondary : Color.green).frame(width: 6, height: 6)
-                .help(session.lastReplyAt.map { "Last reply \(Formatting.age(of: $0, at: now))" } ?? "No reply seen yet")
             Text(session.displayName)
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .help(session.projectDir ?? "")
             Spacer(minLength: 8)
             if let model = session.model {
                 Text(Formatting.modelName(model))
@@ -326,54 +332,31 @@ struct SessionLine: View {
             cache
         }
         .font(.caption)
+        .contentShape(Rectangle())
+        .help(SessionSummary.tooltip(session: session, now: now, watched: watched, canWatch: toggleWatch != nil))
     }
 
     @ViewBuilder private var cache: some View {
         if let expires = session.cacheExpiresAt {
             let warm = expires > now
-            let soon = warm && expires.timeIntervalSince(now) < Self.coolingAfter
+            let soon = warm && expires.timeIntervalSince(now) < (session.cacheTTL?.cooling ?? 10 * 60)
             let label = Label(warm ? Formatting.countdown(until: expires, from: now) : "cold",
                               systemImage: watched ? "bell.fill" : "flame.fill")
                 .labelStyle(CompactLabel())
                 .monospacedDigit()
                 .fixedSize()
                 .foregroundStyle(soon ? Color.orange : warm ? Color.secondary : Color.secondary.opacity(0.5))
-            Group {
-                if let toggleWatch {
-                    Button(action: toggleWatch) { label }.buttonStyle(.plain)
-                } else {
-                    label
-                }
+            if let toggleWatch {
+                Button(action: toggleWatch) { label }.buttonStyle(.plain)
+            } else {
+                label
             }
-            .help(cacheHelp(warm: warm, expires: expires))
         }
-        if let health = session.cacheHealth, health.missedRecently(at: now), let missedAt = health.lastMissAt {
+        if let health = session.cacheHealth, health.missedRecently(at: now) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
-                .help(missHelp(health, at: missedAt))
         }
     }
-
-    private func missHelp(_ health: CacheHealth, at missedAt: Date) -> String {
-        let cause = health.lastMissCauses.isEmpty ? "cause unknown"
-            : health.lastMissCauses.map(CacheHealth.describe).joined(separator: ", ")
-        return "Cache miss \(Formatting.age(of: missedAt, at: now)) (\(cause)): a message re-read the conversation at full price."
-            + (health.hitRatio.map { " Hit rate \(Formatting.percent($0 * 100))." } ?? "")
-    }
-
-    private func cacheHelp(warm: Bool, expires: Date) -> String {
-        let recache = session.recacheTokens.map { " re-reads \(Formatting.tokens($0)) tokens" } ?? " re-reads the conversation"
-        let state = warm
-            ? "Prompt cache: warm until \(expires.formatted(date: .omitted, time: .shortened)). Reply before then and the conversation is re-read cheaply; after it, the next message\(recache) at full price."
-            : "Prompt cache: cold. The next message\(recache) at full price."
-        let stats = session.cacheHealth.flatMap { health in
-            health.hitRatio.map { " Hit rate \(Formatting.percent($0 * 100)), \(health.misses) miss\(health.misses == 1 ? "" : "es")." }
-        } ?? ""
-        guard toggleWatch != nil else { return state + stats }
-        return state + stats + (watched ? "\nClick to stop notifying." : "\nClick to be notified 5 minutes before it goes cold.")
-    }
-
-    private static let coolingAfter: TimeInterval = 10 * 60
 }
 
 private struct CompactLabel: LabelStyle {

@@ -128,6 +128,11 @@ struct SettingsPage: View {
                 .help("Notify when a limit passes this, and again when it resets")
             }
 
+            if model.hasLiveAccounts {
+                Divider()
+                LiveSettings(model: model)
+            }
+
             Divider()
 
             HStack {
@@ -143,6 +148,64 @@ struct SettingsPage: View {
         // Clicking empty space ends editing a label, which saves it.
         .contentShape(Rectangle())
         .onTapGesture { NSApplication.shared.keyWindow?.makeFirstResponder(nil) }
+    }
+}
+
+/// Settings that only matter once an account has Live on.
+struct LiveSettings: View {
+    let model: UsageModel
+    @State private var amount: String
+    @FocusState private var editingAmount: Bool
+
+    init(model: UsageModel) {
+        self.model = model
+        _amount = State(initialValue: model.extraUsageAlertAmount)
+    }
+
+    private var steps: [Int] { LiveSchedule.extraUsageMinutes }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Extra usage")
+                .font(.subheadline.weight(.semibold))
+            HStack {
+                Text("On extra usage, check Live every")
+                Slider(value: Binding(get: { Double(steps.firstIndex(of: model.extraUsageMinutes) ?? 0) },
+                                      set: { model.setExtraUsageMinutes(steps[min(max(Int($0.rounded()), 0), steps.count - 1)]) }),
+                       in: 0...Double(steps.count - 1), step: 1)
+                    .frame(width: 90)
+                Text("\(model.extraUsageMinutes) min")
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            .controlSize(.small)
+            .font(.callout)
+            .help("While an account's plan limit is full and it's spending extra usage, Live checks this often instead of hourly")
+
+            if model.notificationsAvailable {
+                HStack {
+                    Text("Notify when extra usage passes")
+                    TextField("Amount", text: $amount, prompt: Text("Off"))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 70)
+                        .focused($editingAmount)
+                        .onSubmit(save)
+                        .onChange(of: editingAmount) { _, editing in if !editing { save() } }
+                        .onDisappear(perform: save)
+                        .help("This month's spend, in each account's own currency. Empty is off. Saved when you press Return or click away.")
+                }
+                .controlSize(.small)
+                .font(.callout)
+            }
+        }
+    }
+
+    private func save() {
+        if SpendAlerts.amount(from: amount) == nil { amount = "" }
+        if amount.trimmingCharacters(in: .whitespaces) != model.extraUsageAlertAmount {
+            model.setExtraUsageAlertAmount(amount)
+        }
     }
 }
 
@@ -217,7 +280,7 @@ struct SetupRowView: View {
     private func confirmLive() -> Bool {
         let alert = NSAlert()
         alert.messageText = "Turn on Live usage?"
-        alert.informativeText = "Headroom will read this account's Claude Code login from your Keychain and use it to ask Anthropic for your usage, once an hour and when you press ⟳. This also counts claude.ai, the desktop app and other devices.\n\nmacOS will ask for your password. The login is kept in memory only and sent only to Anthropic. When Claude Code renews it, Live pauses until you press ⟳."
+        alert.informativeText = "Headroom will read this account's Claude Code login from your Keychain and use it to ask Anthropic for your usage, once an hour (more often while the account is on extra usage, set in Settings) and when you press ⟳. This also counts claude.ai, the desktop app and other devices.\n\nmacOS will ask for your password. The login is kept in memory only and sent only to Anthropic. When Claude Code renews it, Live pauses until you press ⟳."
         alert.addButton(withTitle: "Turn On")
         alert.addButton(withTitle: "Cancel")
         NSApplication.shared.activate()

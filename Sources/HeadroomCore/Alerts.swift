@@ -96,7 +96,7 @@ private extension String {
 }
 
 public enum CacheAlerts {
-    /// How long before the cache goes cold to notify.
+    /// How long before the cache goes cold to notify when the cache type is unknown.
     public static let lead: TimeInterval = 5 * 60
 
     public struct Alert: Equatable, Sendable {
@@ -108,8 +108,16 @@ public enum CacheAlerts {
     public static func due(_ sessions: [SessionSnapshot], watched: Set<String>, now: Date) -> [Alert] {
         sessions.compactMap { session in
             guard watched.contains(session.sessionId), let expires = session.cacheExpiresAt else { return nil }
-            let fireAt = expires.addingTimeInterval(-lead)
+            let fireAt = expires.addingTimeInterval(-(session.cacheTTL?.lead ?? lead))
             return fireAt > now ? Alert(sessionId: session.sessionId, fireAt: fireAt) : nil
         }
+    }
+
+    public static func notice(for session: SessionSnapshot) -> LimitAlerts.Notice {
+        let minutes = Int((session.cacheTTL?.lead ?? lead) / 60)
+        let recache = session.recacheTokens.map { "re-reads \(Formatting.tokens($0)) tokens" } ?? "re-reads the conversation"
+        return LimitAlerts.Notice(id: "cache-\(session.sessionId)",
+                                  title: "\(session.displayName): cache goes cold in \(minutes) minutes",
+                                  body: "After that, the next message \(recache) at full price.")
     }
 }

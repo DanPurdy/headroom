@@ -15,6 +15,11 @@ public struct LimitWindow: Codable, Equatable, Sendable {
         now >= resetsAt ? 0 : usedPercentage
     }
 
+    /// Whether either plan window is full at `now`.
+    public static func planLimitReached(fiveHour: LimitWindow?, sevenDay: LimitWindow?, at now: Date) -> Bool {
+        [fiveHour, sevenDay].contains { ($0?.usedPercentage(at: now) ?? 0) >= 100 }
+    }
+
     /// The more recent of two readings. Within a window usage only rises, and a later window
     /// resets later, so this never lets an old reading replace a newer one.
     public static func newer(_ a: LimitWindow?, _ b: LimitWindow?) -> LimitWindow? {
@@ -103,23 +108,31 @@ public struct AccountSnapshot: Codable, Equatable, Sendable {
 
     /// Combines readings from any number of sessions, in any order, keeping the newest of each
     /// window. A window missing from `incoming` tells us nothing, so the existing one stays, and
-    /// so do the Live-only fields when `incoming` is a status line reading.
+    /// so do the Live-only fields when `incoming` is a status line reading. A Live reading is
+    /// authoritative for them: extra usage switched off, say, clears it.
     public func merging(_ incoming: AccountSnapshot) -> AccountSnapshot {
-        AccountSnapshot(key: key, label: incoming.label, configDir: incoming.configDir,
-                        fiveHour: LimitWindow.newer(fiveHour, incoming.fiveHour),
-                        sevenDay: LimitWindow.newer(sevenDay, incoming.sevenDay),
-                        updatedAt: max(updatedAt, incoming.updatedAt),
-                        scoped: incoming.scoped ?? scoped,
-                        extraUsage: incoming.extraUsage ?? extraUsage,
-                        weeklyBreakdown: incoming.weeklyBreakdown ?? weeklyBreakdown,
-                        liveSamples: incoming.liveSamples ?? liveSamples,
-                        plan: incoming.plan ?? plan)
+        let isLive = incoming.liveSamples != nil
+        return AccountSnapshot(key: key, label: incoming.label, configDir: incoming.configDir,
+                               fiveHour: LimitWindow.newer(fiveHour, incoming.fiveHour),
+                               sevenDay: LimitWindow.newer(sevenDay, incoming.sevenDay),
+                               updatedAt: max(updatedAt, incoming.updatedAt),
+                               scoped: isLive ? incoming.scoped : incoming.scoped ?? scoped,
+                               extraUsage: isLive ? incoming.extraUsage : incoming.extraUsage ?? extraUsage,
+                               weeklyBreakdown: isLive ? incoming.weeklyBreakdown : incoming.weeklyBreakdown ?? weeklyBreakdown,
+                               liveSamples: incoming.liveSamples ?? liveSamples,
+                               plan: incoming.plan ?? plan)
     }
 
     /// `samples` with `sample` added, dropping those older than session samples are kept for.
     public static func liveSamples(_ samples: [UsageSample]?, adding sample: UsageSample, now: Date) -> [UsageSample] {
         let cutoff = now.addingTimeInterval(-SessionSnapshot.costHistory)
         return ((samples ?? []) + [sample]).filter { $0.at > cutoff }.sorted { $0.at < $1.at }
+    }
+
+    /// Drawing on extra usage: it's switched on and a plan window is full. Only Live knows
+    /// about extra usage, so this is meaningful for Live accounts.
+    public func isOnExtraUsage(at now: Date) -> Bool {
+        extraUsage != nil && LimitWindow.planLimitReached(fiveHour: fiveHour, sevenDay: sevenDay, at: now)
     }
 
     public func isStale(at now: Date) -> Bool {
@@ -203,11 +216,14 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     /// Tokens the next message re-processes at full price once the cache has gone cold.
     public var recacheTokens: Int?
     public var cacheHealth: CacheHealth?
+    /// Claude Code's `prompt_cache.ttl`, kept as sent so a value Headroom doesn't know can't fail decoding.
+    public var cacheTTLRaw: String?
 
     public init(sessionId: String, accountKey: String, name: String?, projectDir: String?, model: String?,
                 costUSD: Double?, contextPercentage: Double?, process: ProcessIdentity?, lastReplyAt: Date? = nil,
                 firstSeenAt: Date, updatedAt: Date, samples: [UsageSample]? = nil,
-                cacheExpiresAt: Date? = nil, recacheTokens: Int? = nil, cacheHealth: CacheHealth? = nil) {
+                cacheExpiresAt: Date? = nil, recacheTokens: Int? = nil, cacheHealth: CacheHealth? = nil,
+                cacheTTLRaw: String? = nil) {
         self.sessionId = sessionId
         self.accountKey = accountKey
         self.name = name
@@ -223,7 +239,10 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         self.cacheExpiresAt = cacheExpiresAt
         self.recacheTokens = recacheTokens
         self.cacheHealth = cacheHealth
+        self.cacheTTLRaw = cacheTTLRaw
     }
+
+    public var cacheTTL: PromptCacheTTL? { cacheTTLRaw.flatMap(PromptCacheTTL.init(rawValue:)) }
 
     public var displayName: String {
         name ?? projectDir.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "session"
@@ -301,9 +320,22 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
                 return input.promptCache?.warm == false ? min(date, now) : date
             },
             recacheTokens: input.promptCache?.recacheTokensIfCold.map { Int($0) },
-            cacheHealth: input.promptCache.flatMap(CacheHealth.init)
+            cacheHealth: input.promptCache.flatMap(CacheHealth.init),
+            cacheTTLRaw: input.promptCache?.ttl
         )
     }
+}
+
+/// How long Claude Code keeps a conversation's prompt cache warm between messages.
+public enum PromptCacheTTL: String, Sendable {
+    case fiveMinutes = "5m"
+    case oneHour = "1h"
+
+    /// How long before it goes cold to notify.
+    public var lead: TimeInterval { self == .fiveMinutes ? 2 * 60 : 5 * 60 }
+    /// Inside this long the countdown turns orange.
+    public var cooling: TimeInterval { self == .fiveMinutes ? 2 * 60 : 10 * 60 }
+    public var displayName: String { self == .fiveMinutes ? "5-minute" : "1-hour" }
 }
 
 /// How well a session's conversation is reusing its prompt cache.

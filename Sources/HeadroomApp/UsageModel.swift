@@ -47,16 +47,13 @@ struct SetupRow: Identifiable {
 struct LiveState {
     var refreshing = false
     var lastAttempt: Date?
-    var lastSuccess: Date?
     var retryAt: Date?
+    /// 429s in a row; the wait before retrying doubles with each.
+    var consecutiveRateLimits = 0
     var error: String?
     var plan: String?
     /// Waiting for the user to press ⟳, because the check needs the Keychain.
     var paused = false
-
-    var nextDue: Date? {
-        paused ? nil : retryAt ?? lastAttempt.map { $0.addingTimeInterval(UsageAPI.refreshInterval) }
-    }
 }
 
 /// Everything the menu shows. Nothing here polls: it reloads when a snapshot file changes or a
@@ -98,6 +95,10 @@ final class UsageModel {
     private(set) var menuBarStyle = UserDefaults.standard.string(forKey: UsageModel.menuBarStyleKey).flatMap(MenuBarStyle.init) ?? .bars
     /// Accounts (by key) left out of the menu bar; new accounts start shown.
     private(set) var hiddenMenuBarAccounts = Set(UserDefaults.standard.stringArray(forKey: UsageModel.hiddenMenuBarKey) ?? [])
+    /// Minutes between Live checks while an account is on extra usage; one of `LiveSchedule.extraUsageMinutes`.
+    private(set) var extraUsageMinutes = UsageModel.savedExtraUsageMinutes
+    /// Notify when this month's extra usage passes this amount; empty is off.
+    private(set) var extraUsageAlertAmount = UserDefaults.standard.string(forKey: UsageModel.extraUsageAmountKey) ?? ""
 
     @ObservationIgnored private let store = SnapshotStore()
     @ObservationIgnored private let installer = Installer()
@@ -128,6 +129,15 @@ final class UsageModel {
     private static let announcedUpdateKey = "announcedUpdate"
     private static let menuBarStyleKey = "menuBarStyle"
     private static let hiddenMenuBarKey = "hiddenMenuBarAccounts"
+    private static let extraUsageMinutesKey = "extraUsageLiveInterval"
+    private static let extraUsageAmountKey = "extraUsageAlertAmount"
+    private static let firedExtraUsageKey = "firedExtraUsageAlerts"
+    private static let firedSpendKey = "firedSpendAlerts"
+
+    private static var savedExtraUsageMinutes: Int {
+        let saved = UserDefaults.standard.integer(forKey: extraUsageMinutesKey)
+        return LiveSchedule.extraUsageMinutes.contains(saved) ? saved : LiveSchedule.defaultExtraUsageMinutes
+    }
 
     @ObservationIgnored private var addedDirs: [String] = UserDefaults.standard.stringArray(forKey: UsageModel.addedDefaultsKey) ?? []
     /// Tracked Codex homes and their labels.
@@ -155,7 +165,6 @@ final class UsageModel {
             if !showsWelcome { UserDefaults.standard.set(true, forKey: Self.welcomeDoneKey) }
         }
         reload()
-        runDueLiveChecks()
         checkForUpdatesIfDue()
     }
 
@@ -180,6 +189,13 @@ final class UsageModel {
     func setMenuBarStyle(_ style: MenuBarStyle) {
         menuBarStyle = style
         UserDefaults.standard.set(style.rawValue, forKey: Self.menuBarStyleKey)
+    }
+
+    func setExtraUsageMinutes(_ minutes: Int) {
+        guard LiveSchedule.extraUsageMinutes.contains(minutes) else { return }
+        extraUsageMinutes = minutes
+        UserDefaults.standard.set(minutes, forKey: Self.extraUsageMinutesKey)
+        reload()
     }
 
     func setShownInMenuBar(_ key: String, _ shown: Bool) {
@@ -288,6 +304,18 @@ final class UsageModel {
         }
     }
 
+    /// An empty or unreadable amount turns the alert off.
+    func setExtraUsageAlertAmount(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        whenNotificationsAllowed(enabling: SpendAlerts.amount(from: trimmed) != nil) { [self] in
+            extraUsageAlertAmount = trimmed
+            UserDefaults.standard.set(trimmed, forKey: Self.extraUsageAmountKey)
+            reload()
+        }
+    }
+
+    var hasLiveAccounts: Bool { !live.isEmpty }
+
     func toggleWatch(_ sessionId: String) {
         let watching = !watchedSessions.contains(sessionId)
         whenNotificationsAllowed(enabling: watching) { [self] in
@@ -327,10 +355,11 @@ final class UsageModel {
             .mapValues { Date(timeIntervalSince1970: $0) }
         let outcome = LimitAlerts.evaluate(lastSnapshots, threshold: alertThreshold > 0 ? Double(alertThreshold) : nil,
                                            fired: fired, now: now)
-        notifier.deliver(outcome)
+        notifier.deliver(LimitAlerts.notices(for: outcome, now: now))
         if outcome.fired != fired {
             UserDefaults.standard.set(outcome.fired.mapValues(\.timeIntervalSince1970), forKey: Self.firedAlertsKey)
         }
+        updateExtraUsageNotifications(notifier)
 
         let known = Set(lastSessions.map(\.sessionId))
         if !watchedSessions.isSubset(of: known) {
@@ -339,6 +368,32 @@ final class UsageModel {
         }
         let active = accounts.flatMap(\.activeSessions)
         notifier.schedule(CacheAlerts.due(active, watched: watchedSessions, now: now), sessions: active)
+    }
+
+    /// Extra usage is only known to Live, so only Live accounts are considered.
+    private func updateExtraUsageNotifications(_ notifier: Notifier) {
+        let defaults = UserDefaults.standard
+        let liveKeys = Set(live.keys.map(ConfigDir.key))
+        let liveAccounts = lastSnapshots.filter { liveKeys.contains($0.key) }
+
+        if alertThreshold > 0 {
+            let fired = (defaults.dictionary(forKey: Self.firedExtraUsageKey) as? [String: Double] ?? [:])
+                .mapValues { Date(timeIntervalSince1970: $0) }
+            let outcome = ExtraUsageAlerts.evaluate(liveAccounts, fired: fired, now: now)
+            notifier.deliver(ExtraUsageAlerts.notices(for: outcome.crossed, accounts: liveAccounts, now: now))
+            if outcome.fired != fired {
+                defaults.set(outcome.fired.mapValues(\.timeIntervalSince1970), forKey: Self.firedExtraUsageKey)
+            }
+        }
+
+        let amount = SpendAlerts.amount(from: extraUsageAlertAmount)
+        let fired = (defaults.dictionary(forKey: Self.firedSpendKey) as? [String: String] ?? [:])
+            .compactMapValues { Decimal(string: $0) }
+        let outcome = SpendAlerts.evaluate(accounts: liveAccounts, amount: amount, fired: fired)
+        if let amount { notifier.deliver(SpendAlerts.notices(for: outcome, amount: amount)) }
+        if outcome.fired != fired {
+            defaults.set(outcome.fired.mapValues { "\($0)" }, forKey: Self.firedSpendKey)
+        }
     }
 
     // MARK: - Updates
@@ -412,8 +467,9 @@ final class UsageModel {
         live[configDir] = enabled ? LiveState() : nil
         if !enabled { LiveFetcher.forget(configDir: configDir) }
         UserDefaults.standard.set(Array(live.keys).sorted(), forKey: Self.liveDefaultsKey)
-        reload()
+        // Before reload, which would otherwise start a background check that can't read the Keychain.
         if enabled { refreshLive(configDir: configDir, interactive: true) }
+        reload()
     }
 
     /// `interactive` when the user asked (⟳ or switching Live on): only then may it read the
@@ -438,7 +494,7 @@ final class UsageModel {
         state.refreshing = false
         switch result {
         case .success(let fetched):
-            state.lastSuccess = Date()
+            state.consecutiveRateLimits = 0
             state.error = nil
             state.paused = false
             state.plan = fetched.plan
@@ -458,16 +514,30 @@ final class UsageModel {
             state.error = failure.message
             if case .needsAccess = failure { state.paused = true }
             if case .rateLimited(let retryAfter) = failure {
-                state.retryAt = Date().addingTimeInterval(max(retryAfter ?? 0, 5 * 60))
+                state.consecutiveRateLimits += 1
+                state.retryAt = Date().addingTimeInterval(
+                    LiveSchedule.backoff(consecutiveRateLimits: state.consecutiveRateLimits, retryAfter: retryAfter))
             }
         }
         live[configDir] = state
         reload()
     }
 
+    /// Hourly, or the extra-usage setting while this account's plan limit is full and it's spending.
+    private func liveInterval(_ configDir: String) -> TimeInterval {
+        let snapshot = lastSnapshots.first { $0.key == ConfigDir.key(for: configDir) }
+        return LiveSchedule.interval(onExtraUsage: snapshot?.isOnExtraUsage(at: Date()) ?? false,
+                                     extraUsageInterval: TimeInterval(extraUsageMinutes * 60))
+    }
+
+    private func liveNextDue(_ configDir: String, _ state: LiveState) -> Date? {
+        LiveSchedule.nextDue(lastAttempt: state.lastAttempt, retryAt: state.retryAt, paused: state.paused,
+                             interval: liveInterval(configDir))
+    }
+
     private func runDueLiveChecks() {
         let now = Date()
-        for (dir, state) in live where !state.paused && (state.nextDue.map { $0 <= now } ?? true) {
+        for (dir, state) in live where !state.paused && (liveNextDue(dir, state).map { $0 <= now } ?? true) {
             refreshLive(configDir: dir, interactive: false)
         }
     }
@@ -505,6 +575,7 @@ final class UsageModel {
         refreshRows()
         watchProcesses(Set(lastSessions.compactMap(\.process).filter(ProcessLookup.isRunning)).union(openCodex.values))
         updateNotifications()
+        runDueLiveChecks()
         scheduleWake()
     }
 
@@ -562,9 +633,9 @@ final class UsageModel {
         }
     }
 
-    /// Live accounts are checked hourly, so only call them stale once a check is overdue.
+    /// Live accounts are checked on a schedule, so only call them stale once a check is overdue.
     private func staleAfter(_ configDir: String) -> TimeInterval {
-        live[configDir].map { !$0.paused } ?? false ? UsageAPI.refreshInterval + 10 * 60 : AccountSnapshot.staleAfter
+        live[configDir].map { !$0.paused } ?? false ? liveInterval(configDir) + 10 * 60 : AccountSnapshot.staleAfter
     }
 
     /// One kqueue exit source per running session, so a closed session drops off immediately.
@@ -593,7 +664,7 @@ final class UsageModel {
         var moments = lastSnapshots.flatMap { [$0.fiveHour?.resetsAt, $0.sevenDay?.resetsAt] }.compactMap { $0 }
         moments += lastSnapshots.map { $0.updatedAt.addingTimeInterval(staleAfter($0.configDir)) }
         moments += lastSessions.compactMap { $0.lastReplyAt?.addingTimeInterval(Self.idleAfter) }
-        moments += live.values.compactMap(\.nextDue)
+        moments += live.compactMap { liveNextDue($0.key, $0.value) }
         moments += [nextUpdateCheck].compactMap { $0 }
         // Not startOfDay + 24h: that's 23:00 on the day the clocks go back.
         if let midnight = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: now)) {
@@ -602,7 +673,6 @@ final class UsageModel {
         let next = (moments.filter { $0 > now }.min() ?? now.addingTimeInterval(3600)).addingTimeInterval(1)
         wakeTimer = Timer.scheduledTimer(withTimeInterval: next.timeIntervalSince(now), repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.runDueLiveChecks()
                 self?.checkForUpdatesIfDue()
                 self?.reload()
             }
