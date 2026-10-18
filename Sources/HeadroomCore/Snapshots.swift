@@ -120,7 +120,7 @@ public struct AccountSnapshot: Codable, Equatable, Sendable {
                                extraUsage: isLive ? incoming.extraUsage : incoming.extraUsage ?? extraUsage,
                                weeklyBreakdown: isLive ? incoming.weeklyBreakdown : incoming.weeklyBreakdown ?? weeklyBreakdown,
                                liveSamples: incoming.liveSamples ?? liveSamples,
-                        plan: incoming.plan ?? plan)
+                               plan: incoming.plan ?? plan)
     }
 
     /// `samples` with `sample` added, dropping those older than session samples are kept for.
