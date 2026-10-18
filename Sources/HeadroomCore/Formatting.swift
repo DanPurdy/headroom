@@ -28,6 +28,15 @@ public enum Formatting {
             : "0% used, reset \(age(of: window.resetsAt, at: now))"
     }
 
+    /// The pace caption under a limit bar: "On course to run out in 2h 10m", "Out of headroom until it resets"
+    /// once usage has hit the limit, or nil when the window lasts until its reset.
+    public static func outlook(_ pace: LimitWindow.Pace, at now: Date) -> String? {
+        guard let limitAt = pace.limitAt else { return nil }
+        return limitAt > now
+            ? "On course to run out in \(countdown(until: limitAt, from: now))"
+            : "Out of headroom until it resets"
+    }
+
     public static func percent(_ value: Double) -> String {
         "\(Int(value.rounded()))%"
     }
