@@ -52,13 +52,13 @@ final class StatusPanel: NSObject {
 
     /// Redraws the menu bar gauge whenever what it shows changes.
     private func updateButton() {
-        let (columns, description) = withObservationTracking {
-            (model.menuBarColumns, model.menuBarDescription)
+        let (columns, style, description) = withObservationTracking {
+            (model.menuBarColumns, model.menuBarStyle, model.menuBarDescription)
         } onChange: { [weak self] in
             Task { @MainActor in self?.updateButton() }
         }
         guard let button = statusItem.button else { return }
-        button.image = MenuBarGauge.image(for: columns)
+        button.image = MenuBarGauge.image(for: columns, style: style)
             ?? NSImage(systemSymbolName: "gauge.with.dots.needle.33percent", accessibilityDescription: "Headroom")
         button.setAccessibilityLabel(description.isEmpty ? "Headroom" : description)
     }
