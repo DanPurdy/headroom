@@ -60,6 +60,15 @@ public enum Formatting {
         amount.formatted(.currency(code: currency).locale(locale))
     }
 
+    /// "£" for GBP, "$" for USD in the US; the code itself when the locale has no symbol for it.
+    public static func currencySymbol(_ currency: String, locale: Locale = .current) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = locale
+        formatter.numberStyle = .currency
+        formatter.currencyCode = currency
+        return formatter.currencySymbol ?? currency
+    }
+
     public static func usd(_ value: Double) -> String {
         String(format: "$%.2f", value)
     }
